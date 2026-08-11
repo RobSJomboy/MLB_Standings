@@ -8,11 +8,17 @@ operator window *and* the OBS overlay, with four graphics on it:
 - **AL Wild Card** — the wild card race with a dashed line under the three spots
 - **NL Wild Card** — same
 
-The graphic itself is unchanged from the separate `AL_Standings` /
+The graphic is otherwise unchanged from the separate `AL_Standings` /
 `NL_Standings` / `*_WildCard_Standings` files it replaces: a 1920×1080
 transparent canvas with a 528×1004 panel pinned to the right, 38px down. Same
 Rift type, same gold `#c8a84b`, same slide-in and row build. Drop-in swap for
 the four Browser Sources you had before.
+
+The one deliberate change: the header reads **AL Standings** / **NL Standings**
+rather than spelling out "American League Standings". Spelled out, it wrapped to
+two lines of 54px inside a 72px header, so the second line crossed the gold rule
+and sat on top of the EAST row. One line also matches the wild card panels, so
+all four now share the same header geometry.
 
 Numbers come live from the MLB StatsAPI and re-fetch every 30 minutes. A refresh
 that lands while a graphic is on air swaps the numbers in place — it does not
