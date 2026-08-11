@@ -26,12 +26,32 @@ replay the reveal animation.
 
 ---
 
+## Live version
+
+Hosted on GitHub Pages, so there is nothing to download and OBS can point at a
+URL instead of a file path:
+
+**<https://robsjomboy.github.io/MLB_Standings/>**
+
+Every push to `main` republishes it, usually within a minute.
+
+Two things get better on the hosted version than on a local file: the **Copy**
+button actually works (the clipboard API is blocked on `file://`), and the OBS
+URL it generates is a plain `https://` link you can paste on any machine instead
+of a path that only resolves on yours.
+
+The local file still works exactly as before — double-click it. Use whichever
+suits you; they are the same file.
+
+---
+
 ## Running the show
 
 ### 1. Open the control window
 
-Double-click `MLB_Standings.html`. That is the operator window: four buttons, a
-live preview, and the connection panels.
+Open **<https://robsjomboy.github.io/MLB_Standings/>** (or double-click your local
+`MLB_Standings.html`). That is the operator window: four buttons, a live preview,
+and the connection panels.
 
 The preview is not a mock-up — it is the same 1920×1080 markup the overlay uses,
 scaled down in place. What you see is what is going out.
@@ -47,6 +67,10 @@ directly. They talk over an [ntfy.sh](https://ntfy.sh) topic instead.
 1. In the control window, copy the **OBS URL** from the *OBS output* panel.
 2. Add a **Browser Source**, **1920×1080**, leave **Local file unchecked**, and
    paste that URL in.
+
+From the hosted version that URL looks like
+`https://robsjomboy.github.io/MLB_Standings/MLB_Standings.html?output=1&topic=…`
+— copy it from the control window rather than typing it, so the topic matches.
 
 That's it. The source listens on the same topic and mirrors the preview. It also
 catches up on load, so starting OBS after the control window still comes up on
