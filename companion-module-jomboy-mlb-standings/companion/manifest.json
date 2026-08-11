@@ -1,0 +1,26 @@
+{
+	"id": "jomboy-mlb-standings",
+	"name": "jomboy-mlb-standings",
+	"shortname": "MLB Standings",
+	"description": "Take AL / NL standings and wild card graphics to air from a Stream Deck",
+	"version": "1.0.0",
+	"license": "MIT",
+	"repository": "https://github.com/RobSJomboy/MLB_Standings",
+	"bugs": "https://github.com/RobSJomboy/MLB_Standings/issues",
+	"maintainers": [
+		{
+			"name": "Jomboy Media",
+			"email": "robert@jomboymedia.com"
+		}
+	],
+	"runtime": {
+		"type": "node18",
+		"api": "nodejs-ipc",
+		"apiVersion": "1.0.0",
+		"entrypoint": "main.js"
+	},
+	"manufacturer": "Jomboy Media",
+	"products": ["MLB Standings"],
+	"keywords": ["baseball", "mlb", "standings", "graphics", "broadcast", "obs"],
+	"legacyIds": []
+}

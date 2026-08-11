@@ -1,0 +1,6 @@
+.DS_Store
+*.log
+
+# node_modules is deliberately committed for the Companion module — Companion
+# loads a developer module straight from disk and needs its dependencies sitting
+# next to main.js, so a fresh clone has to be runnable as-is.
