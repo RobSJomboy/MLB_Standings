@@ -656,7 +656,27 @@ const DIVISIONS = {
   104: [{ id: 204, name: 'East' }, { id: 205, name: 'Central' }, { id: 203, name: 'West' }],
 };
 
-const LOGO_BASE = 'https://www.mlbstatic.com/team-logos/team-cap-on-dark';
+/* Cap marks in team colour.
+
+   `team-cap-on-dark` is flat #FFF for all 30 clubs — that is why the Reds' C,
+   the Phillies' P and the Nationals' W were all coming out as plain white
+   letters. `team-cap-on-light` is the same cap shape inked in team colour.
+
+   Five caps are a single dark ink with nothing brighter than channel 72 in the
+   whole mark, so in colour they'd vanish against dark video. Those keep the
+   white version; the other 25 clubs get their colour. */
+const LOGO_COLOUR = 'https://www.mlbstatic.com/team-logos/team-cap-on-light';
+const LOGO_WHITE  = 'https://www.mlbstatic.com/team-logos/team-cap-on-dark';
+
+const DARK_CAPS = new Set([
+  116,   // Tigers     #0A2240  navy
+  133,   // Athletics  #003831  dark green
+  135,   // Padres     #2F241D  brown
+  145,   // White Sox  #000000  black
+  147,   // Yankees    #132448  navy
+]);
+
+const logoURL = (id) => `${DARK_CAPS.has(id) ? LOGO_WHITE : LOGO_COLOUR}/${id}.svg`;
 const WC_SPOTS  = 3;          // teams above the dashed cut line
 const REFRESH_MS = 30 * 60 * 1000;
 
@@ -756,8 +776,8 @@ function teamRow(tr, gb, delay) {
   const id   = tr.team.id;
   const name = (tr.team.teamName || tr.team.name || '').toUpperCase();
   return `<div class="team-row" style="animation-delay:${delay}ms">
-    <img class="team-logo" src="${LOGO_BASE}/${id}.svg" alt="${name}"
-         onerror="this.style.visibility='hidden'">
+    <img class="team-logo" src="${logoURL(id)}" alt="${name}"
+         onerror="if(this.dataset.fb){this.style.visibility='hidden'}else{this.dataset.fb=1;this.src='${LOGO_WHITE}/${id}.svg'}">
     <span class="team-name">${name}</span>
     <span class="team-wl">${wins(tr)}-${losses(tr)}</span>
     <span class="team-gb">${gb}</span>

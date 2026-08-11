@@ -173,5 +173,29 @@ page derives the race from the division standings instead: it drops the division
 leaders, sorts by win percentage, and measures games back off the last wild card
 spot.
 
-Team logos load from `mlbstatic.com`; a logo that fails to load hides itself
-rather than leaving a broken image on air.
+### Team logos
+
+Cap marks come from `mlbstatic.com` in **team colour** — the `team-cap-on-light`
+set. The `team-cap-on-dark` set that this originally used is flat white for all
+30 clubs, which is why the Reds' C, the Phillies' P and the Nationals' W were
+coming out as plain white letters.
+
+Five caps are a single dark ink with nothing brighter than channel 72 anywhere in
+the mark, so in colour they would disappear against dark video. Those keep the
+white version:
+
+| Team | Cap ink |
+| --- | --- |
+| Tigers | `#0A2240` navy |
+| Yankees | `#132448` navy |
+| White Sox | black (the SVG ships with no fill at all) |
+| Padres | `#2F241D` brown |
+| Athletics | `#003831` dark green |
+
+The other 25 clubs get their colour. If a colour mark ever fails to load it falls
+back to the white one, and only hides itself if that fails too — so a bad asset
+never leaves a gap in the row.
+
+The darkest mark still in colour is the Royals' `#004687` blue. It reads fine
+over most backgrounds; if it ever gets lost on air, add `118` to `DARK_CAPS` in
+`MLB_Standings.html` and it will switch to white with everything else.
