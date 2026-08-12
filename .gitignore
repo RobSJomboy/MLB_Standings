@@ -8,3 +8,6 @@
 # npm CLI shim for a transitive dep, never executed — and a symlink, which a
 # Windows checkout turns into a junk text file. The package itself is committed.
 companion-module-jomboy-mlb-standings/node_modules/.bin/
+
+# wrangler dev scratch state (local Durable Object sqlite) — never commit
+relay/.wrangler/

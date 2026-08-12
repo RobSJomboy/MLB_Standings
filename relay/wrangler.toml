@@ -1,0 +1,12 @@
+name = "jomboy-relay"
+main = "worker.js"
+compatibility_date = "2025-06-01"
+
+[[durable_objects.bindings]]
+name = "ROOM"
+class_name = "Room"
+
+# SQLite-backed Durable Objects — this is the backend the Workers Free plan supports.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Room"]

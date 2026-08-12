@@ -580,6 +580,16 @@
           <span class="dot" id="ntfy-dot" title="ntfy relay"></span>
         </div>
         <div class="field">
+          <label>Relay</label>
+          <input type="text" id="hub-input" placeholder="https://…workers.dev (optional)" spellcheck="false">
+          <span class="dot" id="hub-dot" title="your own relay"></span>
+        </div>
+        <div class="field">
+          <label></label>
+          <button class="btn small" id="btn-hub">Use Relay</button>
+          <span class="status-line" id="hub-status" style="flex:1">Not set — falling back to ntfy</span>
+        </div>
+        <div class="field">
           <label>OBS URL</label>
           <input type="text" id="obs-url" readonly spellcheck="false">
           <button class="btn small" id="btn-copy">Copy</button>
@@ -590,9 +600,11 @@
           Paste that URL into a <b>1920&times;1080</b> Browser Source with
           <b>Local file unchecked</b> and it mirrors this preview.
           <br><br>
-          It carries two routes: the Companion module below (local and instant — the one
-          that matters if OBS is on this machine) and the ntfy topic as a fallback for an
-          OBS elsewhere. Either alone is enough.
+          It carries every route it has, and any one of them is enough:
+          the <b>Companion module</b> below (local, instant, no internet),
+          your own <b>relay</b> (for OBS on another machine — see
+          <code>relay/DEPLOY.md</code>, and reuse the Trade Snapshot one if you
+          already deployed it), and <b>ntfy.sh</b> as the last resort.
         </div>
       </div>
 
@@ -1081,9 +1093,16 @@ function statePayload() {
   };
 }
 
+/* Order matters. The module socket is local and free. Your own relay is next.
+   ntfy is only used when no relay is configured, or when the relay just failed —
+   publishing to both every press would double the traffic on the one transport
+   that rate-limits. */
 function publish(origin) {
   const payload = statePayload();
-  if (origin !== 'ntfy') ntfyPublish(payload);
+
+  const sentToHub = origin !== 'hub' && hubPublish(payload, origin);
+  if (!sentToHub && origin !== 'ntfy') ntfyPublish(payload);
+
   if (origin !== 'ws') wsSend(payload);
 }
 
@@ -1108,7 +1127,187 @@ function applyAction(msg) {
 }
 
 /* ════════════════════════════════════════════════════════════════════════
-   ntfy.sh relay — the only way to reach an OBS Browser Source
+   YOUR OWN RELAY — a Cloudflare Worker, see relay/DEPLOY.md
+
+   Same job as ntfy, on infrastructure you control, because the public instance
+   goes down mid-show. Identical worker to the Trade Snapshot's, and rooms are
+   namespaced by topic, so one deploy serves every Jomboy graphic.
+
+     POST /r/<room>                  → store and push to everyone
+     GET  /r/<room>                  → last state (poll fallback / catch-up)
+     GET  /r/<room> Upgrade: ws      → live push, current state on connect
+     GET  /                          → health check
+
+   The worker holding the last state is the part that earns its keep on air: an
+   OBS Browser Source that gets refreshed comes back up on whatever graphic is
+   currently live, rather than sitting blank until the next press.
+   ════════════════════════════════════════════════════════════════════════ */
+
+const HUB_STORE   = 'mlbStandings.relay';
+const HUB_POLL_MS = 3000;    // only used if a network eats the websocket upgrade
+
+const hub = {
+  base: '', sock: null, connected: false,
+  attempt: 0, retry: null, poll: null, everWorked: false,
+};
+
+const hubRoom = () => ntfy.topic || 'default';   // one identifier for both routes
+
+function hubStatus(text, cls) {
+  const s = $('hub-status');
+  const d = $('hub-dot');
+  if (s) { s.textContent = text; s.className = 'status-line' + (cls === 'err' ? ' err' : ''); }
+  if (d) d.className = 'dot' + (cls ? ' ' + cls : '');
+}
+
+function hubSet(base) {
+  hub.base = (base || '').trim().replace(/\/+$/, '');
+  try {
+    if (hub.base) localStorage.setItem(HUB_STORE, hub.base);
+    else localStorage.removeItem(HUB_STORE);
+  } catch (e) {}
+  refreshOBSURL();
+}
+
+/* Control window → relay. Fire-and-forget, and ntfy picks up the slack if the
+   relay is unreachable, so a wrong URL can't take the show off the air. */
+function hubPublish(payload, origin) {
+  if (!hub.base) return false;
+  fetch(`${hub.base}/r/${encodeURIComponent(hubRoom())}`, {
+    method: 'POST',
+    body: JSON.stringify(Object.assign({}, payload, { from: CLIENT_ID })),
+  })
+    .then((r) => {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      hub.connected = true;
+      hub.everWorked = true;
+      hubStatus('Relay live · room ' + hubRoom(), 'on');
+    })
+    .catch(() => {
+      hub.connected = false;
+      hubStatus('Relay unreachable — falling back to ntfy', 'err');
+      if (origin !== 'ntfy') ntfyPublish(payload);
+    });
+  return true;
+}
+
+/* Control window: confirm the URL really is a relay before trusting it, and seed
+   the room so a Browser Source that is already running catches up at once.
+
+   Deliberately not on a timer. The chip updates on every press (each one is a
+   POST that either works or doesn't), and the overlay holds its own live socket,
+   so idle polling would buy nothing. */
+async function hubProbe() {
+  if (!hub.base) return;
+  hubStatus('Checking…', 'warn');
+  try {
+    const r = await fetch(hub.base + '/', { cache: 'no-store' });
+    const j = await r.json();
+    if (!j || j.service !== 'jomboy-relay') {
+      hub.connected = false;
+      hubStatus("That URL answered, but it isn't the relay — paste the workers.dev root", 'err');
+      return;
+    }
+    hub.connected = true;
+    hub.everWorked = true;
+    hubStatus('Relay live · room ' + hubRoom(), 'on');
+    hubPublish(statePayload());          // seed the room with what is up now
+  } catch (e) {
+    hub.connected = false;
+    hubStatus('Cannot reach that relay — check the URL, or deploy it', 'err');
+  }
+}
+
+/* Overlay → relay. The worker sends the current state on connect, so there is no
+   separate catch-up read to do. */
+function hubConnect() {
+  hubClose();
+  if (!hub.base) { hubStatus('Not set — falling back to ntfy'); return; }
+
+  let url;
+  try {
+    url = new URL(`${hub.base}/r/${encodeURIComponent(hubRoom())}`);
+  } catch (e) { hubStatus('That is not a URL', 'err'); return; }
+  url.protocol = url.protocol === 'http:' ? 'ws:' : 'wss:';
+
+  if (!hub.attempt) hubStatus('Connecting…', 'warn');
+
+  let sock;
+  try { sock = new WebSocket(url.toString()); } catch (e) { hubScheduleRetry(); return; }
+  hub.sock = sock;
+
+  sock.onopen = () => {
+    hub.connected = true;
+    hub.everWorked = true;
+    hub.attempt = 0;
+    hubStatus('Relay live · room ' + hubRoom(), 'on');
+    hubStopPoll();
+  };
+  sock.onmessage = (ev) => {
+    let msg;
+    try { msg = JSON.parse(ev.data); } catch (e) { return; }
+    if (!msg || msg.from === CLIENT_ID) return;
+    if (msg.type === 'state') applyRemote(msg, 'hub');
+  };
+  sock.onclose = () => {
+    hub.connected = false;
+    hub.sock = null;
+    hubScheduleRetry();
+    hubStartPoll();          // keep following while the socket is away
+  };
+  sock.onerror = () => {};
+}
+
+function hubScheduleRetry() {
+  if (hub.retry) return;
+  const base = BACKOFF[Math.min(hub.attempt, BACKOFF.length - 1)];
+  const wait = Math.round(base * (0.75 + Math.random() * 0.5));
+  hub.attempt++;
+  hubStatus(`Relay offline · retry in ${Math.round(wait / 1000)}s (try ${hub.attempt})`,
+            hub.attempt >= 3 ? 'err' : 'warn');
+  hub.retry = setTimeout(() => { hub.retry = null; hubConnect(); }, wait);
+}
+
+function hubClose() {
+  if (hub.retry) { clearTimeout(hub.retry); hub.retry = null; }
+  if (hub.sock) {
+    hub.sock.onopen = hub.sock.onmessage = hub.sock.onclose = hub.sock.onerror = null;
+    try { hub.sock.close(); } catch (e) {}
+  }
+  hub.sock = null;
+  hub.connected = false;
+  hubStopPoll();
+}
+
+/* A slow read of the stored state, for the case where something between here and
+   Cloudflare drops websocket upgrades. Only runs while the socket is down. */
+function hubStartPoll() {
+  if (hub.poll || !hub.base) return;
+  hub.poll = setInterval(async () => {
+    try {
+      const r = await fetch(`${hub.base}/r/${encodeURIComponent(hubRoom())}`, { cache: 'no-store' });
+      if (!r.ok) return;
+      const msg = await r.json();
+      if (msg && msg.type === 'state' && msg.from !== CLIENT_ID) {
+        hub.everWorked = true;
+        applyRemote(msg, 'hub');
+      }
+    } catch (e) {}
+  }, HUB_POLL_MS);
+}
+
+function hubStopPoll() {
+  if (hub.poll) { clearInterval(hub.poll); hub.poll = null; }
+}
+
+/* Is anything other than ntfy carrying the overlay right now? Used to keep the
+   ntfy warning from crying wolf. */
+function obsCoveredElsewhere() {
+  return ws.overlays > 0 || hub.connected;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   ntfy.sh — the last-resort relay
 
    Published on change only, never on a timer: a chatty topic gets rate limited
    and the overlay stops hearing anything mid-show.
@@ -1218,9 +1417,9 @@ function ntfyPaintRetry() {
   /* If an overlay is already on the module's socket, OBS is following fine and a
      dead relay is not an emergency — only the remote-OBS route is unavailable.
      Crying wolf here is how an indicator stops being believed. */
-  const covered = ws.overlays > 0;
+  const covered = obsCoveredElsewhere();
   const head = !stubborn ? 'Offline'
-             : covered   ? 'ntfy.sh down · OBS is on the module, so this is fine'
+             : covered   ? 'ntfy.sh down · another route is carrying OBS, so this is fine'
                          : 'ntfy.sh unreachable — OBS not syncing';
   ntfyStatus(`${head} · retry in ${secs}s (try ${ntfy.attempt})`,
              stubborn && !covered ? 'err' : 'warn');
@@ -1285,7 +1484,7 @@ setInterval(() => {
   // the countdown frozen at "retry in 0s" — that is what reads as stuck.
   if (connecting && ntfy.attempt > 0) {
     ntfyStatus(`Reconnecting… (try ${ntfy.attempt})`,
-               ntfy.attempt >= 3 && !ws.overlays ? 'err' : 'warn');
+               ntfy.attempt >= 3 && !obsCoveredElsewhere() ? 'err' : 'warn');
   }
 
   if ((connecting && idle > CONNECT_MS) || (ntfy.connected && idle > STALL_MS)) {
@@ -1448,6 +1647,7 @@ function obsURL() {
   let url = `${base}?output=1&topic=${encodeURIComponent(ntfy.topic || '')}`;
   const mod = ($('ws-input') ? $('ws-input').value : '').trim();
   if (mod) url += `&ws=${encodeURIComponent(mod)}`;
+  if (hub.base) url += `&relay=${encodeURIComponent(hub.base)}`;
   return url;
 }
 
@@ -1486,6 +1686,24 @@ function initControl() {
     ntfy.topic = t;
     refreshOBSURL();
     ntfyConnect(t);
+    if (hub.base) hubProbe();      // the topic also names the relay room
+  };
+
+  /* ---- your own relay ---- */
+  let savedHub = params.get('relay') || '';
+  if (!savedHub) { try { savedHub = localStorage.getItem(HUB_STORE) || ''; } catch (e) {} }
+  $('hub-input').value = savedHub;
+  hubSet(savedHub);
+  if (hub.base) hubProbe();
+
+  $('btn-hub').onclick = () => {
+    hubSet($('hub-input').value);
+    if (!hub.base) {
+      hubStatus('Relay cleared — back to ntfy');
+      hub.connected = false;
+      return;
+    }
+    hubProbe();
   };
 
   $('btn-copy').onclick = async () => {
@@ -1535,8 +1753,17 @@ function initControl() {
 
 function initOutput() {
   const topic = params.get('topic');
+  if (topic) ntfy.topic = topic;          // also names the relay room
+
+  // Your own relay first — it holds the last state, so a Browser Source that OBS
+  // just refreshed comes back up on the graphic that is currently live.
+  const relayParam = params.get('relay');
+  if (relayParam) {
+    hub.base = relayParam.trim().replace(/\/+$/, '');
+    hubConnect();
+  }
+
   if (topic) {
-    ntfy.topic = topic;
     ntfyCatchUp(topic);
     ntfyConnect(topic);
   }

@@ -62,40 +62,65 @@ through. Clicking the graphic that is already up clears it.
 ### 2. Point OBS at the output
 
 An OBS Browser Source is its own browser, so it cannot hear the control window
-directly. They talk over an [ntfy.sh](https://ntfy.sh) topic instead.
+directly — something has to carry state between them.
 
 1. In the control window, copy the **OBS URL** from the *OBS output* panel.
 2. Add a **Browser Source**, **1920×1080**, leave **Local file unchecked**, and
    paste that URL in.
 
-From the hosted version that URL looks like
-`https://robsjomboy.github.io/MLB_Standings/MLB_Standings.html?output=1&topic=…&ws=…`
-— copy it from the control window rather than typing it, so both routes match.
+That's it — the source mirrors the preview, and catches up on load, so starting
+OBS after the control window still comes up on the right graphic.
 
-That URL carries **two** ways for the overlay to follow along:
+Copy the URL from the control window rather than typing it, so every route it
+knows about comes along. The topic and relay are remembered between sessions; if
+you change either, re-copy the URL, since both are baked into the query string.
+
+That URL carries **three** ways for the overlay to follow along, in order of
+preference:
 
 | Route | When it carries the show |
 | --- | --- |
-| `&ws=` the Companion module | OBS on this machine. Local, instant, no internet. **Prefer this.** |
-| `&topic=` an ntfy.sh topic | OBS on another machine, or no module running. |
+| `&ws=` the Companion module | OBS on this machine. Local, instant, no internet. **Best.** |
+| `&relay=` your own relay | OBS on another machine. Your Cloudflare account — see [`relay/`](relay/DEPLOY.md). |
+| `&topic=` an ntfy.sh topic | Last resort, and the only one that isn't yours. |
 
-Either alone is enough, and they can't contradict each other — every message is
+Any one alone is enough, and they cannot contradict each other — every message is
 absolute state stamped with a sequence number, so whichever arrives second is
 either identical or newer.
 
-If you run OBS on this machine, the module route means **the show does not depend
-on the internet at all**. Worth having: ntfy.sh is a free public relay and it went
-down hard during this build.
+If OBS is on this machine, the module route means **the show does not depend on
+the internet at all**.
 
-That's it. The source listens on the same topic and mirrors the preview. It also
-catches up on load, so starting OBS after the control window still comes up on
-the right graphic.
+### Your own relay
 
-The topic is remembered between sessions. If you change it, re-copy the OBS URL —
-it has the topic baked into the query string.
+ntfy.sh is a free public instance and it went down hard during this build. The
+`relay/` folder is a ~90-line Cloudflare Worker that does the same job on your own
+account — free plan, no card, permanent URL. Paste its URL into the **Relay** box
+and hit **Use Relay**; it is remembered and rides along in the copied OBS URL.
 
-> The topic is just a shared channel name on a public relay, and the only thing
-> that crosses it is which of the four graphics is up. Nothing sensitive.
+**Already deployed it for the Trade Snapshot? Reuse that URL.** The worker here is
+byte-identical, and rooms are namespaced by topic name, so one relay serves every
+Jomboy graphic without them seeing each other's traffic.
+
+It also does something ntfy can't: the room **keeps the last state**, so a Browser
+Source that OBS refreshes mid-show comes straight back up on the graphic that is
+currently live instead of sitting blank until the next press.
+
+Deploy notes are in [`relay/DEPLOY.md`](relay/DEPLOY.md). To check the worker
+against the contract the pages rely on, run it locally and point the harness at
+it:
+
+```bash
+cd relay && npx wrangler dev --port 8788
+```
+
+```bash
+node relay/test-relay.js
+```
+
+> Whichever remote route you use, the identifier is just a channel name and the
+> only thing crossing it is which of the four graphics is up. Nothing sensitive —
+> though a relay on your own account isn't public the way an ntfy topic is.
 
 ### 3. Optional: Stream Deck
 
@@ -116,10 +141,14 @@ build. The same repo runs as-is on Windows.
 3. In OBS: **Sources → + → Browser**. Set **Width 1920**, **Height 1080**, leave
    **Local file unchecked**, paste the URL, OK.
 
-Drive it from the browser tab. On this path the overlay follows over the ntfy
-relay, so it depends on ntfy.sh being up. For a setup that doesn't, add the
-module below — and note you do **not** need a Stream Deck to benefit, because
-Companion then acts as the local relay between the tab and OBS.
+Drive it from the browser tab. On this path the overlay follows over a remote
+route, so it depends on something outside the machine being up. Two ways to fix
+that, either of which is better than relying on ntfy.sh:
+
+- **Deploy your own relay** ([`relay/DEPLOY.md`](relay/DEPLOY.md)) — still remote,
+  but yours, and it works across machines.
+- **Add Companion** (below) — nothing leaves the PC. You do **not** need a Stream
+  Deck for this; Companion just acts as the local relay between the tab and OBS.
 
 ### With Companion (Stream Deck, and local sync that needs no internet)
 
@@ -239,9 +268,8 @@ one machine that means nothing leaves it:
 ```
 Stream Deck → Companion module ──[WebSocket]──→ control window   (resolves, previews)
                     │                                  │
-                    │←─────────── state ───────────────┘
-                    └──[WebSocket]──→ OBS overlay
-                    └──[ntfy topic]─→ OBS overlay on another machine   (fallback)
+                    │←─────────── state ───────────────┘   └─[your relay]─→ OBS elsewhere
+                    └──[WebSocket]──→ OBS overlay              └─[ntfy]────→ last resort
 ```
 
 The two get different traffic, and that split is the whole design:
@@ -271,19 +299,27 @@ Two consequences worth knowing:
 - The overlay only ever listens. It never publishes, so it cannot argue with the
   operator window.
 
-Traffic on the topic is per-press only — nothing is published on a timer. A
-chatty topic gets rate limited, and a rate-limited topic means the overlay stops
-hearing anything mid-show. The stall watchdog in the page is a local timer that
-reconnects a dead stream; it makes no requests of its own.
+Traffic on the remote routes is **per-press only** — nothing is published on a
+timer. A chatty ntfy topic gets rate limited, and a rate-limited topic means the
+overlay stops hearing anything mid-show. The watchdogs in the page are local
+timers that reconnect a dead stream; they make no requests of their own. The relay
+chip likewise updates off each press rather than polling, because the overlay
+holds its own live socket and idle probing would buy nothing.
 
----
+The control window publishes to the relay **or** ntfy, not both — sending to both
+on every press would double the traffic on the one transport that rate-limits.
+ntfy is used when no relay is set, or when a relay POST has just failed.
 
-## Files
+### Files
 
 | Path | What |
 | --- | --- |
-| `MLB_Standings.html` | The whole thing — control window and overlay. League logos are embedded, so it needs no local assets. |
-| `companion-module-jomboy-mlb-standings/` | The Companion module |
+| `MLB_Standings.html` | Control window and overlay, logos embedded |
+| `index.html` | Redirect so the bare Pages URL works |
+| `companion-module-jomboy-mlb-standings/` | The Companion module, plus its two test harnesses |
+| `relay/` | The Cloudflare Worker relay, its deploy notes and contract test |
+
+---
 
 ### URL parameters
 
@@ -291,7 +327,8 @@ reconnects a dead stream; it makes no requests of its own.
 | --- | --- |
 | `?output=1` | Overlay mode: transparent, graphic only, no UI |
 | `&topic=…` | Which ntfy topic to listen on (or relay to) |
-| `&ws=…` | Overlay only: also dial a Companion module directly |
+| `&ws=…` | Overlay only: dial a Companion module directly |
+| `&relay=…` | Your own relay's base URL |
 | `&graphic=al&show` | Overlay only: come up on one graphic and stay there |
 
 ---
