@@ -103,6 +103,66 @@ See [the Companion module](companion-module-jomboy-mlb-standings/) below.
 
 ---
 
+## On a Windows PC
+
+Nothing here is Mac-only. The graphics are a web page, and the Companion module
+is pure JavaScript — no native binaries, no compiled dependencies, nothing to
+build. The same repo runs as-is on Windows.
+
+### Just OBS, nothing to install
+
+1. Open **<https://robsjomboy.github.io/MLB_Standings/>** in Chrome or Edge.
+2. Copy the **OBS URL** from the *OBS output* panel.
+3. In OBS: **Sources → + → Browser**. Set **Width 1920**, **Height 1080**, leave
+   **Local file unchecked**, paste the URL, OK.
+
+Drive it from the browser tab. On this path the overlay follows over the ntfy
+relay, so it depends on ntfy.sh being up. For a setup that doesn't, add the
+module below — and note you do **not** need a Stream Deck to benefit, because
+Companion then acts as the local relay between the tab and OBS.
+
+### With Companion (Stream Deck, and local sync that needs no internet)
+
+1. **Get the files.** On the repo page: **Code → Download ZIP**, then extract —
+   or `git clone https://github.com/RobSJomboy/MLB_Standings.git`.
+2. Put it somewhere stable, e.g. `C:\Users\<you>\Documents\companion-dev\`.
+   After extracting you want a folder that *directly contains*
+   `companion-module-jomboy-mlb-standings`. A GitHub ZIP unpacks to
+   `MLB_Standings-main\`, and that folder is exactly the right thing to point at.
+3. **Companion → Settings → Developer modules path** → set it to that **parent**
+   folder — `C:\Users\<you>\Documents\companion-dev\MLB_Standings-main` — *not*
+   the module folder itself. This is the single most common way to get it wrong.
+4. **Restart Companion.**
+5. **Connections → +** → search *MLB Standings* (Jomboy Media) → add it.
+   **Label the connection `mlb`**, or the bundled presets that use `$(mlb:…)`
+   come up blank.
+6. In the control window, under *Stream Deck — Bitfocus Companion*, enter
+   `ws://127.0.0.1:8100` and hit **Connect**.
+7. Re-copy the **OBS URL** — it now carries `&ws=` too — and paste it into the
+   Browser Source. Buttons for the Stream Deck are under **Buttons → Presets →
+   MLB Standings**.
+
+You do not need to install Node.js: Companion ships its own runtime, which is
+what runs the module.
+
+### Windows notes
+
+- **Firewall.** The module listens on 8100. Loopback (`127.0.0.1`) traffic isn't
+  filtered, so a same-machine setup normally raises no prompt. If Windows does
+  ask when Companion starts, allowing it on private networks is enough.
+- **A module on a *different* machine.** The module listens on every interface,
+  so `ws://<that-pc-lan-ip>:8100` reaches it — but **not from the hosted
+  `https://` page**. Browsers only exempt `localhost` from the rule against
+  plaintext `ws://` on a secure page; a LAN address gets blocked as mixed
+  content. For that layout either use the ntfy topic, or open your local copy of
+  `MLB_Standings.html` instead of the hosted URL.
+- **Function keys.** On laptops where F-keys default to media controls, the
+  `F9`/`F10` shortcuts need `Fn`. The `1`–`4`, `0` and `Esc` keys don't.
+- **Fonts.** Rift and the UI faces load over the web; there is nothing to
+  install locally.
+
+---
+
 ## The Companion module
 
 `companion-module-jomboy-mlb-standings/` lets a Stream Deck take these graphics
