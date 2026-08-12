@@ -1105,17 +1105,28 @@ function applyAction(msg) {
 /* ════════════════════════════════════════════════════════════════════════
    ntfy.sh relay — the only way to reach an OBS Browser Source
 
-   Published on change only, never on a timer: a chatty topic gets rate
-   limited and the overlay stops hearing anything mid-show. The watchdog
-   below is a local timer that reconnects a stalled stream; it makes no
-   requests of its own.
+   Published on change only, never on a timer: a chatty topic gets rate limited
+   and the overlay stops hearing anything mid-show.
+
+   Reconnects are ours, deliberately. EventSource has its own retry, but it
+   fires every few seconds, its interval is set by the server, and it cannot be
+   adjusted or read from JS — so on a real outage it hammers the relay and
+   flickers the status endlessly. We close the stream on failure and schedule
+   exactly one backed-off retry instead, which is both calmer on the relay and
+   honest on screen about what is happening.
    ════════════════════════════════════════════════════════════════════════ */
 
-const NTFY_HOST   = 'https://ntfy.sh';
-const STALL_MS    = 120000;      // ntfy keepalives land every ~45s
-const WATCHDOG_MS = 30000;
+const NTFY_HOST  = 'https://ntfy.sh';
+const STALL_MS   = 120000;   // ntfy keepalives land every ~45s
+const CONNECT_MS = 15000;    // an attempt that hasn't opened by now is stuck
+const TICK_MS    = 1000;
+const BACKOFF    = [3000, 6000, 12000, 24000, 45000, 60000];
 
-const ntfy = { topic: '', es: null, connected: false, lastSeen: 0, status: 'Not connected' };
+const ntfy = {
+  topic: '', es: null, connected: false,
+  lastSeen: 0, attempt: 0, retryAt: 0, retryTimer: null,
+  status: 'Not connected',
+};
 
 function ntfyStatus(text, cls) {
   ntfy.status = text;
@@ -1125,25 +1136,34 @@ function ntfyStatus(text, cls) {
   if (d) d.className = 'dot' + (cls ? ' ' + cls : '');
 }
 
-function ntfyConnect(topic) {
+function ntfyConnect(topic, isRetry) {
+  if (ntfy.retryTimer) { clearTimeout(ntfy.retryTimer); ntfy.retryTimer = null; }
+  if (!isRetry) { ntfy.attempt = 0; ntfy.retryAt = 0; }
   ntfyDisconnect();
+
   topic = (topic || '').trim();
   if (!topic) { ntfyStatus('No topic set', 'err'); return; }
 
   ntfy.topic = topic;
-  ntfyStatus('Connecting…', 'warn');
+  /* Stamp this now. Left at 0, every "how long since we heard anything" check
+     below measures from the epoch, decides the stream is decades overdue and
+     tears it down on the very first tick — forever. */
+  ntfy.lastSeen = Date.now();
+  if (!isRetry) ntfyStatus('Connecting…', 'warn');
 
   let es;
   try {
     es = new EventSource(`${NTFY_HOST}/${encodeURIComponent(topic)}/sse`);
   } catch (e) {
-    ntfyStatus('Could not open the stream', 'err');
+    ntfyScheduleRetry();
     return;
   }
   ntfy.es = es;
 
   es.onopen = () => {
     ntfy.connected = true;
+    ntfy.attempt = 0;
+    ntfy.retryAt = 0;
     ntfy.lastSeen = Date.now();
     ntfyStatus(IS_OUTPUT ? 'Listening on ' + topic : 'Relaying to ' + topic, 'on');
     // The control window is the authority: announce where things stand so a
@@ -1165,13 +1185,43 @@ function ntfyConnect(topic) {
   };
 
   es.onerror = () => {
-    ntfy.connected = false;
-    ntfyStatus('Reconnecting…', 'warn');   // EventSource retries on its own
+    // Close it, or EventSource keeps retrying on its own schedule underneath ours.
+    ntfyDisconnect();
+    ntfyScheduleRetry();
   };
 }
 
+function ntfyScheduleRetry() {
+  if (ntfy.retryTimer) return;
+  const base = BACKOFF[Math.min(ntfy.attempt, BACKOFF.length - 1)];
+  const wait = Math.round(base * (0.75 + Math.random() * 0.5));   // jitter
+  ntfy.attempt++;
+  ntfy.retryAt = Date.now() + wait;
+  ntfyPaintRetry();
+  ntfy.retryTimer = setTimeout(() => {
+    ntfy.retryTimer = null;
+    ntfyConnect(ntfy.topic, true);
+  }, wait);
+}
+
+/* A live countdown, so a long outage reads as "still trying, and here is when"
+   rather than a frozen "Reconnecting…". Local timer — makes no requests. */
+function ntfyPaintRetry() {
+  if (ntfy.connected || !ntfy.retryAt) return;
+  const secs = Math.max(0, Math.round((ntfy.retryAt - Date.now()) / 1000));
+  const stubborn = ntfy.attempt >= 3;
+  ntfyStatus(
+    (stubborn ? 'ntfy.sh unreachable — OBS not syncing' : 'Offline') +
+      ` · retry in ${secs}s (try ${ntfy.attempt})`,
+    stubborn ? 'err' : 'warn'
+  );
+}
+
 function ntfyDisconnect() {
-  if (ntfy.es) { try { ntfy.es.close(); } catch (e) {} }
+  if (ntfy.es) {
+    ntfy.es.onopen = ntfy.es.onmessage = ntfy.es.onerror = null;
+    try { ntfy.es.close(); } catch (e) {}
+  }
   ntfy.es = null;
   ntfy.connected = false;
 }
@@ -1211,10 +1261,28 @@ async function ntfyCatchUp(topic) {
   } catch (e) {}
 }
 
+/* One tick drives both the countdown and the two ways a stream can die without
+   telling us: a connect that hangs (the relay's TCP just never answers, so
+   EventSource sits in CONNECTING with no error for a long time), and a stream
+   that opened and then went quiet well past the keepalive interval. */
 setInterval(() => {
+  if (ntfy.retryTimer) { ntfyPaintRetry(); return; }   // already waiting to retry
   if (!ntfy.topic || !ntfy.es) return;
-  if (Date.now() - ntfy.lastSeen > STALL_MS) ntfyConnect(ntfy.topic);
-}, WATCHDOG_MS);
+
+  const idle = Date.now() - ntfy.lastSeen;
+  const connecting = ntfy.es.readyState === 0;
+
+  // An attempt can hang for the full CONNECT_MS. Say so, rather than leaving
+  // the countdown frozen at "retry in 0s" — that is what reads as stuck.
+  if (connecting && ntfy.attempt > 0) {
+    ntfyStatus(`Reconnecting… (try ${ntfy.attempt})`, ntfy.attempt >= 3 ? 'err' : 'warn');
+  }
+
+  if ((connecting && idle > CONNECT_MS) || (ntfy.connected && idle > STALL_MS)) {
+    ntfyDisconnect();
+    ntfyScheduleRetry();
+  }
+}, TICK_MS);
 
 /* ════════════════════════════════════════════════════════════════════════
    Companion module — it runs the server, we dial in
