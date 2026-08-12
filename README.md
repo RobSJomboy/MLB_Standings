@@ -69,8 +69,23 @@ directly. They talk over an [ntfy.sh](https://ntfy.sh) topic instead.
    paste that URL in.
 
 From the hosted version that URL looks like
-`https://robsjomboy.github.io/MLB_Standings/MLB_Standings.html?output=1&topic=…`
-— copy it from the control window rather than typing it, so the topic matches.
+`https://robsjomboy.github.io/MLB_Standings/MLB_Standings.html?output=1&topic=…&ws=…`
+— copy it from the control window rather than typing it, so both routes match.
+
+That URL carries **two** ways for the overlay to follow along:
+
+| Route | When it carries the show |
+| --- | --- |
+| `&ws=` the Companion module | OBS on this machine. Local, instant, no internet. **Prefer this.** |
+| `&topic=` an ntfy.sh topic | OBS on another machine, or no module running. |
+
+Either alone is enough, and they can't contradict each other — every message is
+absolute state stamped with a sequence number, so whichever arrives second is
+either identical or newer.
+
+If you run OBS on this machine, the module route means **the show does not depend
+on the internet at all**. Worth having: ntfy.sh is a free public relay and it went
+down hard during this build.
 
 That's it. The source listens on the same topic and mirrors the preview. It also
 catches up on load, so starting OBS after the control window still comes up on
@@ -107,6 +122,16 @@ It is a **developer module**, not in the Companion store:
 `node_modules` has to exist next to `main.js`; it is committed here so the module
 runs as-is.
 
+The module ships with two test harnesses that stub Companion and drive the real
+socket, so the routing rules can be checked without launching anything:
+
+```bash
+node companion-module-jomboy-mlb-standings/test-routing.js
+```
+
+`test-routing.js` covers the control/overlay split; `test-module.js` covers the
+actions, feedbacks and the resolver. Both print PASS/FAIL per check.
+
 **Direction matters:** the module runs the WebSocket server and the browser page
 dials in to it. A browser can only ever be a WebSocket client, so it cannot work
 the other way around.
@@ -125,7 +150,8 @@ the other way around.
 ### Feedbacks
 
 `This graphic is on air` (per graphic), `Any graphic is on air`,
-`Control window is connected`, `Standings data failed to load`.
+`Control window is connected`, `An OBS overlay is dialled into this module`,
+`Standings data failed to load`.
 
 The per-graphic feedback is what makes a Stream Deck button go red while its own
 graphic is up, so the surface matches the control window.
@@ -133,23 +159,44 @@ graphic is up, so the surface matches the control window.
 ### Variables
 
 `$(mlb:graphic)`, `$(mlb:graphic_id)`, `$(mlb:on_air)`, `$(mlb:status)`,
-`$(mlb:data_updated)`, `$(mlb:connected)`, `$(mlb:relay)`.
+`$(mlb:data_updated)`, `$(mlb:connected)`, `$(mlb:overlays)`, `$(mlb:relay)`.
 
 ### Running without the control window
 
-Normally the control window is open — it is where the preview is. If you want
-the Stream Deck to drive the overlay with that window closed, put the same ntfy
-topic in the module's config and it will publish state to the topic itself.
+Normally the control window is open — it is where the preview is. But it isn't
+required: with an overlay dialled into the module, the Stream Deck drives the
+graphics on its own, because the module resolves the actions itself when no
+control window is connected. Setting an ntfy topic in the module's config adds
+the remote route as well.
 
 ---
 
 ## How the pieces talk
 
+Both the control window and the OBS overlay dial into the Companion module. On
+one machine that means nothing leaves it:
+
 ```
-Stream Deck → Companion → [WebSocket] → control window → [ntfy topic] → OBS overlay
-                                             ↑
-                                        preview lives here
+Stream Deck → Companion module ──[WebSocket]──→ control window   (resolves, previews)
+                    │                                  │
+                    │←─────────── state ───────────────┘
+                    └──[WebSocket]──→ OBS overlay
+                    └──[ntfy topic]─→ OBS overlay on another machine   (fallback)
 ```
+
+The two get different traffic, and that split is the whole design:
+
+- **Relative actions** — `toggle`, `next`, a second press meaning *clear* — go
+  **only to control windows**. If overlays resolved those themselves they would
+  each compute their own answer and drift apart from the operator window.
+- **Absolute state** is broadcast to everyone.
+
+So there is always exactly one resolver: the control window when one is
+connected, otherwise the module. An overlay only ever listens, and the module
+ignores state pushed *by* an overlay, so it can never talk over the operator.
+
+An overlay that connects mid-show is handed the current picture immediately, so
+it comes up on the right graphic without waiting for the next press.
 
 Everything that crosses a wire is **absolute state** — `{graphic, visible, seq}`,
 never "toggle". Relative actions are resolved to absolute state by exactly one

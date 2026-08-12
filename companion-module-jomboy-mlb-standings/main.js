@@ -2,19 +2,27 @@ const { InstanceBase, InstanceStatus, runEntrypoint, combineRgb } = require('@co
 const { WebSocketServer } = require('ws')
 
 /*
- * The control window is a browser page, and a browser can only ever be a
- * WebSocket *client*. So this module runs the server and the page dials in.
- * Companion sends actions down the socket; the page pushes its state back up
- * for variables and feedbacks.
+ * The pages are browsers, and a browser can only ever be a WebSocket *client*.
+ * So this module runs the server and the pages dial in. Two kinds do:
  *
- * Everything on the wire that describes what is on screen is ABSOLUTE state
- * ({graphic, visible, seq}) — never "toggle". Only one side ever resolves a
- * relative action into absolute state, so a duplicated or out-of-order message
- * can't leave the Stream Deck lit differently from the output.
+ *   role 'control' — the operator window
+ *   role 'output'  — the OBS overlay
  *
- * If no control window is connected and an ntfy topic is configured, the module
- * publishes that absolute state to the topic itself, so a Stream Deck can still
- * drive the OBS overlay with the operator window closed.
+ * Each announces itself with {type:'hello', role}. That distinction is the whole
+ * design, because the two get different traffic:
+ *
+ *   Relative actions ('toggle', 'next', a second press meaning clear) go ONLY to
+ *   control windows. Absolute state ({graphic, visible, seq}) is broadcast to
+ *   everyone. If overlays resolved relative actions themselves they would each
+ *   compute their own answer and drift apart from the operator window — which is
+ *   exactly what absolute-state-on-the-wire exists to prevent.
+ *
+ * So there is always exactly one resolver: the control window when one is
+ * connected, otherwise this module. Its answer is then broadcast as state.
+ *
+ * An overlay connected here needs no internet at all. ntfy stays as the fallback
+ * for an OBS running on a different machine, and for reaching an overlay when
+ * this module isn't running.
  */
 
 const GRAPHICS = [
@@ -39,7 +47,7 @@ const EMPTY = {
 class MLBStandingsInstance extends InstanceBase {
 	async init(config) {
 		this.config = config
-		this.deck = null // the control window
+		this.clients = new Set() // every dialled-in page; ws.role says which kind
 		this.state = { ...EMPTY }
 
 		this.initActions()
@@ -89,12 +97,13 @@ class MLBStandingsInstance extends InstanceBase {
 				type: 'static-text',
 				id: 'ntfyinfo',
 				width: 12,
-				label: 'Working without the control window (optional)',
+				label: 'ntfy topic (optional fallback)',
 				value:
-					'Fill in the same ntfy topic the control window uses and the Stream Deck will still ' +
-					'drive the OBS overlay when that window is closed. Leave it blank to require the ' +
-					'control window — which is the normal way to run the show, since it is where the ' +
-					'preview lives.',
+					'An OBS overlay on <b>this</b> machine should dial straight into this module — add ' +
+					'<code>&amp;ws=127.0.0.1:&lt;port&gt;</code> to its Browser Source URL and it needs no ' +
+					'internet at all. This topic is only the fallback: for an OBS on a <i>different</i> ' +
+					'machine, or for reaching an overlay while this module is not running. ' +
+					'ntfy.sh is a free public relay and does go down, so prefer the socket.',
 			},
 			{
 				type: 'textinput',
@@ -118,16 +127,15 @@ class MLBStandingsInstance extends InstanceBase {
 			return
 		}
 
-		this.updateStatus(InstanceStatus.Connecting, `Listening on ${port} — waiting for the control window`)
+		this.updateStatus(InstanceStatus.Connecting, `Listening on ${port} — waiting for a page to dial in`)
 
 		this.wss.on('connection', (ws) => {
-			this.deck = ws
-			this.updateStatus(InstanceStatus.Ok, 'Control window connected')
-			this.log('info', 'MLB Standings control window connected')
-			// $(…:connected) is stale until this runs, and the page may not push
-			// state for a while — so refresh it here, not just on the way out.
-			this.pushVariables()
-			this.checkFeedbacks()
+			// A page that never says hello is assumed to be a control window —
+			// that is the safe default, since the alternative would feed relative
+			// actions to something that must not resolve them.
+			ws.role = 'control'
+			this.clients.add(ws)
+			this.reportLinks()
 
 			ws.on('message', (raw) => {
 				let msg
@@ -136,16 +144,32 @@ class MLBStandingsInstance extends InstanceBase {
 				} catch (e) {
 					return
 				}
-				if (msg && msg.type === 'state') this.applyState(msg)
+				if (!msg) return
+
+				if (msg.type === 'hello') {
+					ws.role = msg.role === 'output' ? 'output' : 'control'
+					this.log('info', `MLB Standings ${ws.role} connected`)
+					this.reportLinks()
+					// Hand a page that has just loaded the current picture, so an
+					// overlay opened mid-show comes up on the right graphic without
+					// waiting for the next press. This is what the ntfy catch-up
+					// read does remotely; over the socket it is immediate.
+					if (this.state.graphic || this.state.visible) this.sendState(ws, this.state)
+					return
+				}
+
+				// Only a resolver's state is authoritative. An overlay echoes state
+				// back after applying it; taking that as truth would let it talk
+				// over the operator window.
+				if (msg.type === 'state' && ws.role === 'control') {
+					this.applyState(msg)
+					this.broadcastState(ws) // everyone else, including the overlays
+				}
 			})
 
 			ws.on('close', () => {
-				if (this.deck === ws) {
-					this.deck = null
-					this.updateStatus(InstanceStatus.Connecting, 'Control window disconnected — waiting')
-					this.pushVariables()
-					this.checkFeedbacks()
-				}
+				this.clients.delete(ws)
+				this.reportLinks()
 			})
 
 			ws.on('error', () => {})
@@ -160,20 +184,63 @@ class MLBStandingsInstance extends InstanceBase {
 	}
 
 	stopServer() {
-		try {
-			if (this.deck) this.deck.close()
-		} catch (e) {}
+		for (const ws of this.clients) {
+			try {
+				ws.close()
+			} catch (e) {}
+		}
+		this.clients.clear()
 		try {
 			if (this.wss) this.wss.close()
 		} catch (e) {}
-		this.deck = null
 		this.wss = null
+	}
+
+	/* ---------------------------------------------------------------- *
+	 * who is connected
+	 * ---------------------------------------------------------------- */
+	live(role) {
+		return [...this.clients].filter((ws) => ws.readyState === 1 && (!role || ws.role === role))
+	}
+
+	reportLinks() {
+		const controls = this.live('control').length
+		const outputs = this.live('output').length
+
+		if (!controls && !outputs) {
+			this.updateStatus(InstanceStatus.Connecting, 'Nothing connected — waiting')
+		} else if (!controls) {
+			// Usable: this module resolves the actions itself and drives the overlay.
+			this.updateStatus(InstanceStatus.Ok, `Overlay only (${outputs}) — no control window`)
+		} else {
+			this.updateStatus(
+				InstanceStatus.Ok,
+				`Control window connected${outputs ? ` · ${outputs} overlay${outputs > 1 ? 's' : ''}` : ''}`
+			)
+		}
+
+		this.pushVariables()
+		this.checkFeedbacks()
+		this.broadcastLinks(outputs)
 	}
 
 	applyState(msg) {
 		this.state = { ...EMPTY, ...msg }
 		this.pushVariables()
 		this.checkFeedbacks()
+	}
+
+	/* Tell the control windows how many overlays are on this socket, so they stop
+	   crying "OBS not syncing" over a dead ntfy relay that nothing needs.
+	   Deliberately not part of the state message: this must never be able to move
+	   what is on screen. */
+	broadcastLinks(outputs) {
+		const msg = JSON.stringify({ type: 'links', overlays: outputs })
+		for (const ws of this.live('control')) {
+			try {
+				ws.send(msg)
+			} catch (e) {}
+		}
 	}
 
 	/* ---------------------------------------------------------------- *
@@ -184,25 +251,56 @@ class MLBStandingsInstance extends InstanceBase {
 	 * action here and put the answer on the ntfy topic ourselves.
 	 * ---------------------------------------------------------------- */
 	send(action, extra = {}) {
-		if (this.deck && this.deck.readyState === 1) {
-			try {
-				this.deck.send(JSON.stringify({ type: 'action', action, ...extra }))
-			} catch (e) {
-				this.log('error', `Send failed: ${e.message}`)
+		const controls = this.live('control')
+
+		// A control window is the resolver. Hand it the relative action and let it
+		// tell us what that worked out to; its state push is what reaches the
+		// overlays, so we deliberately do not resolve it here as well.
+		if (controls.length) {
+			const msg = JSON.stringify({ type: 'action', action, ...extra })
+			for (const ws of controls) {
+				try {
+					ws.send(msg)
+				} catch (e) {
+					this.log('error', `Send failed: ${e.message}`)
+				}
 			}
 			return
 		}
 
-		if (this.config?.topic) {
-			this.publishFallback(action, extra)
+		// No control window: this module is the resolver.
+		const outputs = this.live('output')
+		if (outputs.length || this.config?.topic) {
+			this.resolveAndBroadcast(action, extra)
 			return
 		}
 
 		this.log(
 			'warn',
-			'No control window connected — open MLB_Standings.html and connect it, ' +
-				'or set an ntfy topic in this instance\'s config.'
+			'Nothing connected — open MLB_Standings.html and connect it, point the ' +
+				'overlay at this module, or set an ntfy topic in this instance\'s config.'
 		)
+	}
+
+	sendState(ws, state) {
+		try {
+			ws.send(
+				JSON.stringify({
+					type: 'state',
+					graphic: state.graphic,
+					visible: state.visible,
+					seq: state.seq,
+					label: state.label || labelFor(state.graphic),
+				})
+			)
+		} catch (e) {}
+	}
+
+	/* Push the current picture to every client except the one that reported it. */
+	broadcastState(except) {
+		for (const ws of this.live()) {
+			if (ws !== except) this.sendState(ws, this.state)
+		}
 	}
 
 	resolve(action, extra) {
@@ -232,28 +330,43 @@ class MLBStandingsInstance extends InstanceBase {
 		}
 	}
 
-	async publishFallback(action, extra) {
+	/* With no control window this module resolves the action, then gets the answer
+	   out by whatever routes exist. The socket is tried first and on its own is
+	   enough — that is the point of letting overlays dial in, and it keeps working
+	   when ntfy.sh is unreachable. */
+	async resolveAndBroadcast(action, extra) {
 		const next = this.resolve(action, extra)
 		if (!next) return
 
-		const payload = {
-			type: 'state',
-			graphic: next.graphic,
-			visible: next.visible,
+		this.applyState({
+			...next,
 			seq: Date.now(),
 			label: labelFor(next.graphic),
-			from: 'companion',
-		}
+			dataOk: this.state.dataOk,
+			updated: this.state.updated,
+		})
+		this.broadcastState()
 
+		if (!this.config?.topic) return
+
+		// Only worth the round trip for an overlay that isn't on this socket.
 		try {
 			const resp = await fetch(`https://ntfy.sh/${encodeURIComponent(this.config.topic)}`, {
 				method: 'POST',
-				body: JSON.stringify(payload),
+				body: JSON.stringify({
+					type: 'state',
+					graphic: this.state.graphic,
+					visible: this.state.visible,
+					seq: this.state.seq,
+					label: this.state.label,
+					from: 'companion',
+				}),
 			})
 			if (!resp.ok) throw new Error('HTTP ' + resp.status)
-			this.applyState({ ...payload, dataOk: this.state.dataOk, updated: this.state.updated })
 		} catch (e) {
-			this.log('error', `Could not publish to the ntfy topic: ${e.message}`)
+			// Not fatal when an overlay is already on the socket, so keep it quiet.
+			const via = this.live('output').length ? 'info' : 'error'
+			this.log(via, `ntfy publish failed (${e.message})`)
 		}
 	}
 
@@ -268,7 +381,8 @@ class MLBStandingsInstance extends InstanceBase {
 			{ variableId: 'status', name: 'One-line status for a button' },
 			{ variableId: 'data_updated', name: 'When the standings data last refreshed' },
 			{ variableId: 'connected', name: 'Control window is connected' },
-			{ variableId: 'relay', name: 'Control window is relaying to OBS' },
+			{ variableId: 'overlays', name: 'OBS overlays dialled into this module' },
+			{ variableId: 'relay', name: 'Control window is relaying to OBS over ntfy' },
 		])
 		this.pushVariables()
 	}
@@ -288,7 +402,8 @@ class MLBStandingsInstance extends InstanceBase {
 			on_air: s.visible ? 'yes' : 'no',
 			status: s.visible && label ? label : 'OFF AIR',
 			data_updated: updated,
-			connected: this.deck ? 'yes' : 'no',
+			connected: this.live('control').length ? 'yes' : 'no',
+			overlays: this.live('output').length,
 			relay: s.ntfy ? 'yes' : 'no',
 		})
 	}
@@ -380,14 +495,21 @@ class MLBStandingsInstance extends InstanceBase {
 				name: 'Control window is connected',
 				defaultStyle: { bgcolor: green, color: white },
 				options: [],
-				callback: () => !!this.deck,
+				callback: () => this.live('control').length > 0,
+			},
+			overlay_linked: {
+				type: 'boolean',
+				name: 'An OBS overlay is dialled into this module',
+				defaultStyle: { bgcolor: green, color: white },
+				options: [],
+				callback: () => this.live('output').length > 0,
 			},
 			data_ok: {
 				type: 'boolean',
 				name: 'Standings data failed to load',
 				defaultStyle: { bgcolor: combineRgb(190, 120, 0), color: combineRgb(0, 0, 0) },
 				options: [],
-				callback: () => !!this.deck && !this.state.dataOk,
+				callback: () => this.live('control').length > 0 && !this.state.dataOk,
 			},
 		})
 	}
@@ -462,6 +584,14 @@ class MLBStandingsInstance extends InstanceBase {
 			style: { ...base, size: '7', text: 'CONTROL\\n$(mlb:connected)' },
 			steps: [{ down: [], up: [] }],
 			feedbacks: [{ feedbackId: 'connected', options: {} }],
+		}
+		presets['overlay'] = {
+			type: 'button',
+			category: 'Status',
+			name: 'Overlay dialled in',
+			style: { ...base, size: '7', text: 'OVERLAY\\n$(mlb:overlays)' },
+			steps: [{ down: [], up: [] }],
+			feedbacks: [{ feedbackId: 'overlay_linked', options: {} }],
 		}
 		presets['refresh'] = {
 			type: 'button',

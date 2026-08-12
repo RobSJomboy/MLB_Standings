@@ -588,7 +588,11 @@
         <div class="note">
           An OBS Browser Source is its own browser, so it can't hear this window directly.
           Paste that URL into a <b>1920&times;1080</b> Browser Source with
-          <b>Local file unchecked</b> — it listens on the same topic and mirrors this preview.
+          <b>Local file unchecked</b> and it mirrors this preview.
+          <br><br>
+          It carries two routes: the Companion module below (local and instant — the one
+          that matters if OBS is on this machine) and the ntfy topic as a fallback for an
+          OBS elsewhere. Either alone is enough.
         </div>
       </div>
 
@@ -730,7 +734,7 @@ async function fetchAll() {
 
   reportData();
   stampUpdated();
-  wsSend(statePayload());        // refreshes $(…:data_updated) on the Stream Deck
+  if (!IS_OUTPUT) wsSend(statePayload());   // refreshes $(mlb:data_updated)
 
   if (pending) {
     // Something was taken before the data landed. The shell is already on
@@ -973,9 +977,10 @@ function animateOut(then) {
 function syncDOM() {
   const want = state.visible ? state.graphic : null;
   paintControl();
-  // Also from output mode, so a `?output&ws=` overlay driven straight off a
-  // Stream Deck still keeps Companion's variables and feedbacks honest.
-  wsSend(statePayload());
+  /* Only a control window reports upward. The module ignores state from an
+     overlay on purpose — an overlay echoing back what it just applied must not
+     be able to talk over the operator window — so sending it would be noise. */
+  if (!IS_OUTPUT) wsSend(statePayload());
 
   if (!want) {
     if (shown.visible) {
@@ -1210,11 +1215,15 @@ function ntfyPaintRetry() {
   if (ntfy.connected || !ntfy.retryAt) return;
   const secs = Math.max(0, Math.round((ntfy.retryAt - Date.now()) / 1000));
   const stubborn = ntfy.attempt >= 3;
-  ntfyStatus(
-    (stubborn ? 'ntfy.sh unreachable — OBS not syncing' : 'Offline') +
-      ` · retry in ${secs}s (try ${ntfy.attempt})`,
-    stubborn ? 'err' : 'warn'
-  );
+  /* If an overlay is already on the module's socket, OBS is following fine and a
+     dead relay is not an emergency — only the remote-OBS route is unavailable.
+     Crying wolf here is how an indicator stops being believed. */
+  const covered = ws.overlays > 0;
+  const head = !stubborn ? 'Offline'
+             : covered   ? 'ntfy.sh down · OBS is on the module, so this is fine'
+                         : 'ntfy.sh unreachable — OBS not syncing';
+  ntfyStatus(`${head} · retry in ${secs}s (try ${ntfy.attempt})`,
+             stubborn && !covered ? 'err' : 'warn');
 }
 
 function ntfyDisconnect() {
@@ -1275,7 +1284,8 @@ setInterval(() => {
   // An attempt can hang for the full CONNECT_MS. Say so, rather than leaving
   // the countdown frozen at "retry in 0s" — that is what reads as stuck.
   if (connecting && ntfy.attempt > 0) {
-    ntfyStatus(`Reconnecting… (try ${ntfy.attempt})`, ntfy.attempt >= 3 ? 'err' : 'warn');
+    ntfyStatus(`Reconnecting… (try ${ntfy.attempt})`,
+               ntfy.attempt >= 3 && !ws.overlays ? 'err' : 'warn');
   }
 
   if ((connecting && idle > CONNECT_MS) || (ntfy.connected && idle > STALL_MS)) {
@@ -1288,7 +1298,11 @@ setInterval(() => {
    Companion module — it runs the server, we dial in
    ════════════════════════════════════════════════════════════════════════ */
 
-const ws = { url: '', sock: null, connected: false, want: false, retry: null };
+/* attempt/backoff for the same reason ntfy has them: the OBS URL now carries
+   &ws=, so an overlay may be pointed at a module that isn't running, and a
+   fixed 3s retry forever is the thrash we just removed from the relay. */
+const ws = { url: '', sock: null, connected: false, want: false, retry: null, attempt: 0, overlays: 0 };
+const WS_BACKOFF = [2000, 4000, 8000, 15000, 30000];
 
 function wsStatus(text, cls) {
   const s = $('ws-status');
@@ -1299,7 +1313,7 @@ function wsStatus(text, cls) {
   if (b) b.textContent = ws.want ? 'Disconnect' : 'Connect';
 }
 
-function wsConnect(url) {
+function wsConnect(url, isRetry) {
   wsClose();
   url = (url || '').trim();
   if (!url) { wsStatus('No address set', 'err'); return; }
@@ -1307,7 +1321,7 @@ function wsConnect(url) {
 
   ws.url = url;
   ws.want = true;
-  wsStatus('Connecting…', 'warn');
+  if (!isRetry) { ws.attempt = 0; wsStatus('Connecting…', 'warn'); }
 
   let sock;
   try { sock = new WebSocket(url); } catch (e) { wsStatus('Bad address', 'err'); return; }
@@ -1315,25 +1329,36 @@ function wsConnect(url) {
 
   sock.onopen = () => {
     ws.connected = true;
+    ws.attempt = 0;
     wsStatus('Connected to Companion', 'on');
+    /* Say which kind of page this is. The module sends relative actions only to
+       control windows — an overlay resolving 'toggle' on its own would drift
+       away from the operator window — and it replies to this with the current
+       state, so an overlay opened mid-show catches up at once. */
+    try { sock.send(JSON.stringify({ type: 'hello', role: IS_OUTPUT ? 'output' : 'control' })); } catch (e) {}
     lastWSPayload = '';                  // a fresh socket needs the full picture
-    wsSend(statePayload());
+    if (!IS_OUTPUT) wsSend(statePayload());
   };
   sock.onmessage = (ev) => {
     let msg;
     try { msg = JSON.parse(ev.data); } catch (e) { return; }
     if (msg.type === 'action') applyAction(msg);
     if (msg.type === 'state')  applyRemote(msg, 'ws');
+    // How many overlays are on the module's socket. Never touches what is on
+    // screen — it only tells us whether a dead ntfy relay actually matters.
+    if (msg.type === 'links')  ws.overlays = Number(msg.overlays) || 0;
   };
   sock.onclose = () => {
     ws.connected = false;
     ws.sock = null;
-    if (ws.want) {
-      wsStatus('Disconnected — retrying…', 'warn');
-      ws.retry = setTimeout(() => { if (ws.want) wsConnect(ws.url); }, 3000);
-    } else {
-      wsStatus('Not connected');
-    }
+    ws.overlays = 0;              // no module, so we know nothing about overlays
+    if (!ws.want) { wsStatus('Not connected'); return; }
+
+    const base = WS_BACKOFF[Math.min(ws.attempt, WS_BACKOFF.length - 1)];
+    const wait = Math.round(base * (0.75 + Math.random() * 0.5));
+    ws.attempt++;
+    wsStatus(`No module · retry in ${Math.round(wait / 1000)}s (try ${ws.attempt})`, ws.attempt >= 3 ? 'err' : 'warn');
+    ws.retry = setTimeout(() => { if (ws.want) wsConnect(ws.url, true); }, wait);
   };
   sock.onerror = () => {};
 }
@@ -1415,9 +1440,15 @@ function fitPreview() {
   stage.style.transform = `scale(${k})`;
 }
 
+/* The overlay gets both routes. The socket is the one that matters — local,
+   instant, no relay to be down — and the topic rides along so an OBS on another
+   machine, or one running while the module isn't, still follows. */
 function obsURL() {
   const base = location.href.split('?')[0].split('#')[0];
-  return `${base}?output=1&topic=${encodeURIComponent(ntfy.topic || '')}`;
+  let url = `${base}?output=1&topic=${encodeURIComponent(ntfy.topic || '')}`;
+  const mod = ($('ws-input') ? $('ws-input').value : '').trim();
+  if (mod) url += `&ws=${encodeURIComponent(mod)}`;
+  return url;
 }
 
 function refreshOBSURL() {
@@ -1472,6 +1503,8 @@ function initControl() {
   let savedWS = 'ws://127.0.0.1:8100';
   try { savedWS = localStorage.getItem('mlbStandings.ws') || savedWS; } catch (e) {}
   $('ws-input').value = savedWS;
+  refreshOBSURL();                       // the module address rides in the OBS URL
+  $('ws-input').oninput = refreshOBSURL;
 
   $('btn-ws').onclick = () => {
     if (ws.want) { ws.want = false; wsClose(); wsStatus('Not connected'); return; }
