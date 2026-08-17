@@ -517,6 +517,28 @@
     gap: 7px;
   }
   .status-line.err { color: #e0857d; }
+
+  /* The headline answer to "is OBS actually following me?" — the rows beneath
+     are the individual routes, which mostly nobody needs to read. */
+  .verdict {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 1.35;
+    padding: 10px 12px;
+    margin-bottom: 14px;
+    border-radius: 7px;
+    background: #16303f;
+    border: 1px solid rgba(255,255,255,0.09);
+    color: #cfe0ec;
+  }
+  .verdict.on   { background: #14351f; border-color: rgba(55,194,107,0.45); color: #d6f2e0; }
+  .verdict.warn { background: #362b12; border-color: rgba(224,163,58,0.45); color: #f2e3c4; }
+  .verdict.err  { background: #3a1a17; border-color: rgba(216,72,63,0.5);  color: #f6d5d2; }
+  .verdict .dot { flex-shrink: 0; }
 </style>
 </head>
 <body class="mode-control">
@@ -574,6 +596,11 @@
 
       <div class="panel">
         <h2>OBS output</h2>
+        <!-- The one line that matters. The rows under it are just the plumbing. -->
+        <div class="verdict" id="obs-verdict">
+          <span class="dot" id="obs-dot"></span>
+          <span id="obs-verdict-text">Checking…</span>
+        </div>
         <div class="field">
           <label>Topic</label>
           <input type="text" id="topic-input" spellcheck="false">
@@ -587,7 +614,7 @@
         <div class="field">
           <label></label>
           <button class="btn small" id="btn-hub">Use Relay</button>
-          <span class="status-line" id="hub-status" style="flex:1">Not set — falling back to ntfy</span>
+          <span class="status-line" id="hub-status" style="flex:1">Not set — only needed for OBS on another machine</span>
         </div>
         <div class="field">
           <label>OBS URL</label>
@@ -1147,7 +1174,7 @@ const HUB_STORE   = 'mlbStandings.relay';
 const HUB_POLL_MS = 3000;    // only used if a network eats the websocket upgrade
 
 const hub = {
-  base: '', sock: null, connected: false,
+  base: '', sock: null, connected: false, sent: 0,
   attempt: 0, retry: null, poll: null, everWorked: false,
 };
 
@@ -1181,7 +1208,9 @@ function hubPublish(payload, origin) {
       if (!r.ok) throw new Error('HTTP ' + r.status);
       hub.connected = true;
       hub.everWorked = true;
-      hubStatus('Relay live · room ' + hubRoom(), 'on');
+      // The worker replies with how many sockets it pushed to — actual proof of
+      // someone listening, rather than just "the POST went through".
+      return r.json().then((j) => { hub.sent = Number(j && j.sent) || 0; }).catch(() => {});
     })
     .catch(() => {
       hub.connected = false;
@@ -1222,7 +1251,7 @@ async function hubProbe() {
    separate catch-up read to do. */
 function hubConnect() {
   hubClose();
-  if (!hub.base) { hubStatus('Not set — falling back to ntfy'); return; }
+  if (!hub.base) { hubStatus('Not set — only needed for OBS on another machine'); return; }
 
   let url;
   try {
@@ -1304,6 +1333,54 @@ function hubStopPoll() {
    ntfy warning from crying wolf. */
 function obsCoveredElsewhere() {
   return ws.overlays > 0 || hub.connected;
+}
+
+/* ── the headline verdict ────────────────────────────────────────────────
+   Every route panel below reports on itself, which turns out to be useless to
+   an operator: on a one-machine rig two of the three are meant to sit unused,
+   and their warnings read as faults. So say the useful thing outright.
+
+   Note the difference between knowing and hoping. An overlay on the module's
+   socket is counted by the module, and the relay's POST replies with how many
+   sockets it pushed to — both are proof something is listening. A live ntfy
+   subscription only proves *we* can reach ntfy, never that OBS did. */
+function paintOBSVerdict() {
+  if (IS_OUTPUT) return;
+  const el = $('obs-verdict');
+  const txt = $('obs-verdict-text');
+  const dot = $('obs-dot');
+  if (!el || !txt) return;
+
+  let cls, msg;
+
+  if (ws.overlays > 0) {
+    cls = 'on';
+    msg = `OBS is connected — ${ws.overlays} Browser Source on the Companion module. ` +
+          `Nothing leaves this machine, so the relay and topic below are unused. That is fine.`;
+  } else if (hub.sent > 0) {
+    cls = 'on';
+    msg = `OBS is connected — ${hub.sent} Browser Source on your relay.`;
+  } else if (hub.connected) {
+    cls = 'warn';
+    msg = 'Relay is live, but no Browser Source has picked it up yet. ' +
+          'Take a graphic; if OBS still does not move, re-copy the OBS URL into it.';
+  } else if (ntfy.connected) {
+    cls = 'warn';
+    msg = 'On the ntfy topic. It cannot tell us whether OBS is listening — ' +
+          'take a graphic and watch OBS to be sure.';
+  } else if (ws.connected) {
+    cls = 'warn';
+    msg = 'Companion is connected but no Browser Source has dialled in. ' +
+          'Re-copy the OBS URL below into your Browser Source — it carries the module address.';
+  } else {
+    cls = 'err';
+    msg = 'Nothing can reach OBS yet. Connect the Companion module below (best on one ' +
+          'machine), or set a relay — see relay/DEPLOY.md.';
+  }
+
+  el.className = 'verdict ' + cls;
+  txt.textContent = msg;
+  if (dot) dot.className = 'dot ' + (cls === 'on' ? 'on' : cls);
 }
 
 /* ════════════════════════════════════════════════════════════════════════
@@ -1474,6 +1551,8 @@ async function ntfyCatchUp(topic) {
    EventSource sits in CONNECTING with no error for a long time), and a stream
    that opened and then went quiet well past the keepalive interval. */
 setInterval(() => {
+  paintOBSVerdict();                                   // cheap, and always true to now
+
   if (ntfy.retryTimer) { ntfyPaintRetry(); return; }   // already waiting to retry
   if (!ntfy.topic || !ntfy.es) return;
 
