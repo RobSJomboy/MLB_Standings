@@ -158,13 +158,24 @@ that, either of which is better than relying on ntfy.sh:
    After extracting you want a folder that *directly contains*
    `companion-module-jomboy-mlb-standings`. A GitHub ZIP unpacks to
    `MLB_Standings-main\`, and that folder is exactly the right thing to point at.
-3. **Companion → Settings → Developer modules path** → set it to that **parent**
-   folder — `C:\Users\<you>\Documents\companion-dev\MLB_Standings-main` — *not*
-   the module folder itself. This is the single most common way to get it wrong.
-4. **Restart Companion.**
-5. **Connections → +** → search *MLB Standings* (Jomboy Media) → add it.
+3. **This setting is in the Companion _launcher_ window, not the web UI.** That's
+   the small desktop window you get when Companion starts (if it's hidden, click
+   the Companion icon in the system tray).
+   - Click the **cog in the top-right** to open Advanced Settings
+   - Find the **Developer** section
+   - **Select** your folder — `C:\Users\<you>\Documents\companion-dev\MLB_Standings-main`,
+     the **parent** of the module folder, *not* the module folder itself
+   - Turn **Enable Developer Modules** on — easy to miss, and nothing loads
+     without it
+   - Close the window and **Launch GUI**
+4. **Connections → +** → search *MLB Standings* (Jomboy Media) → add it.
    **Label the connection `mlb`**, or the bundled presets that use `$(mlb:…)`
    come up blank.
+
+If *MLB Standings* isn't in that list, Companion never loaded the module — it is
+almost always the path pointing one level too deep, or the Enable toggle being
+off. Companion picks up changes to a developer module while running, so you don't
+need to restart it once the path is right.
 6. In the control window, under *Stream Deck — Bitfocus Companion*, enter
    `ws://127.0.0.1:8100` and hit **Connect**.
 7. Re-copy the **OBS URL** — it now carries `&ws=` too — and paste it into the
