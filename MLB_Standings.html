@@ -1302,9 +1302,15 @@ function inItSet(pic) {
   return ids;
 }
 
-/* Remaining games between two clubs that are both still in it — the ones that
-   actually move the wild card or a division, as opposed to games against clubs
-   playing out the year. */
+/* Remaining games with a club still in it on BOTH sides. These are the
+   double-leverage ones: the winner gains and a rival loses in the same
+   afternoon, so the gap moves two ways at once.
+
+   This is not "every game that can affect the race" — an earlier version of
+   this comment claimed that, and it was wrong. A contender playing a club that
+   is out of it can absolutely swing things; the Reds have seven games left with
+   the Dodgers. What cannot move a race is a game between two clubs that are
+   both already out. Those spoiler games get their own section below. */
 function swingGames(pic) {
   if (!data.sched) return null;
   const ids = inItSet(pic);
@@ -1373,10 +1379,22 @@ function buildPlayoffs(leagueId) {
   });
   html += '</div>';
 
+  /* ── who is out of it and still holds other people's fate ── */
+  const spoil = spoilers(pic, leagueId, 2);
+  if (spoil.length) {
+    html += '<div class="po-section">';
+    html += `<div class="po-label">Spoilers
+               <span class="po-hint">out of it &middot; games left vs the field</span></div>`;
+    spoil.forEach((x) => {
+      html += poTeamRow(x.t, '', `${x.vs} OF ${x.total} LEFT`, rowDelay());
+    });
+    html += '</div>';
+  }
+
   /* ── the one number that says how live this all is ── */
-  /* Per-team games left is already on each just-out row, so the footer answers
-     the harder question: of everything unplayed, how much of it is between clubs
-     that can still move the wild card or a division. */
+  /* Per-team games left is already on each just-out row, so the footer carries
+     the number you cannot get by reading the rows: how much of what is unplayed
+     is contender against contender. */
   const swing = swingGames(pic);
   html += '<div class="po-section"><div class="po-foot">';
   html += swing
@@ -1813,6 +1831,38 @@ function hubStartPoll() {
 
 function hubStopPoll() {
   if (hub.poll) { clearInterval(hub.poll); hub.poll = null; }
+}
+
+/* Clubs out of the race whose remaining schedule is loaded with clubs that are
+   not. A team playing out the year still decides other people's Septembers, and
+   the schedule is where you see it coming: ranked by how many of its games left
+   are against the ones still alive, most first. Same league only — an AL club on
+   the NL panel would just be confusing. */
+function spoilers(pic, leagueId, limit) {
+  if (!data.sched || !data.div) return [];
+  const inIt = inItSet(pic);
+
+  const league = [];
+  DIVISIONS[leagueId].forEach((div) => {
+    const rec = data.div.find((r) => r.division && r.division.id === div.id);
+    if (rec) rec.teamRecords.forEach((t) => league.push(t));
+  });
+
+  return league
+    .filter((t) => !inIt.has(t.team.id))
+    .map((t) => {
+      let vs = 0, total = 0;
+      data.sched.forEach((g) => {
+        const me = g[0] === t.team.id ? g[1] : g[1] === t.team.id ? g[0] : null;
+        if (me === null) return;
+        total++;
+        if (inIt.has(me)) vs++;
+      });
+      return { t, vs, total };
+    })
+    .filter((x) => x.vs > 0)
+    .sort((a, b) => b.vs - a.vs || b.vs / Math.max(1, b.total) - a.vs / Math.max(1, a.total))
+    .slice(0, limit || 2);
 }
 
 /* Is anything other than ntfy carrying the overlay right now? Used to keep the

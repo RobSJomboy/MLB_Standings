@@ -146,11 +146,23 @@ who is head to head and where those games are played, who is just out and by how
 much, and how many unplayed games are still between clubs that can move it.
 
 **Games left.** Each just-out row carries that club's own games remaining. The
-footer answers the harder question — of everything unplayed, how much is between
-clubs still in it. Games against a club playing out the year can't change a race;
-those are excluded. "Still in it" means the six in plus anyone within 6.0 of the
-last wild card who hasn't been eliminated, taken from the feed's own elimination
-number rather than guessed.
+footer carries the number you can't get by reading the rows: how much of what is
+unplayed is **contender against contender**. Those are the double-leverage ones —
+the winner gains and a rival loses the same afternoon, so the gap moves two ways
+at once.
+
+That is deliberately *not* "every game that can affect the race". A contender
+playing a club that is out of it can absolutely swing things. What can't move a
+race is a game between two clubs that are already both out.
+
+"Still in it" means the six in plus anyone within 6.0 games of the last wild card
+who hasn't been eliminated, using the feed's own elimination number rather than a
+guess.
+
+**Spoilers.** The clubs out of the race holding the most games against the ones
+still alive — a team playing out the year still decides other people's
+Septembers, and the schedule is where you see it coming. Ranked by games left
+against the field, same league only.
 
 **Ties use MLB's real criteria.** Since 2022 there is no game 163 — ties are
 settled on paper, in this order:
