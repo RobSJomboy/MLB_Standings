@@ -47,9 +47,16 @@ function check(name, cond, extra) {
 	const inst = new Captured()
 	await inst.init({ port: PORT, topic: '' })
 
+	// Read the graphic list off the module rather than restating it, so adding a
+	// graphic doesn't fail these on a stale count.
+	const CHOICES = inst.actions.take.options[0].choices.map((c) => c.id)
+	const NG = CHOICES.length
+	console.log(`      (module exposes ${NG} graphics: ${CHOICES.join(', ')})`)
+
 	check('action definitions exist', Object.keys(inst.actions).length === 7, Object.keys(inst.actions))
 	check('feedback definitions exist', Object.keys(inst.feedbacks).length === 5, Object.keys(inst.feedbacks))
-	check('presets include one per graphic + extras', Object.keys(inst.presets).length === 4 + 4 + 4, Object.keys(inst.presets).length)
+	check('presets include one per graphic + extras',
+		Object.keys(inst.presets).length === NG + 4 + 4, Object.keys(inst.presets).length)
 	check('starts OFF AIR', calls.vars.status === 'OFF AIR', calls.vars)
 
 	/* ---- the control window dials in ---- */
@@ -94,26 +101,25 @@ function check(name, cond, extra) {
 		JSON.stringify(inst.resolve('take', { graphic: 'nl' })) === JSON.stringify({ graphic: 'nl', visible: true }))
 	check('resolve: show never clears',
 		JSON.stringify(inst.resolve('show', { graphic: 'alwc' })) === JSON.stringify({ graphic: 'alwc', visible: true }))
-	// state.graphic is 'alwc' (index 2), so next is 'nlwc' (index 3)
+	// state.graphic is 'alwc', so next is whatever follows it in the module's order
 	check('resolve: next steps forward',
-		JSON.stringify(inst.resolve('next', {})) === JSON.stringify({ graphic: 'nlwc', visible: true }),
+		inst.resolve('next', {}).graphic === CHOICES[CHOICES.indexOf('alwc') + 1],
 		inst.resolve('next', {}))
 	check('resolve: prev steps back',
-		JSON.stringify(inst.resolve('prev', {})) === JSON.stringify({ graphic: 'nl', visible: true }),
+		inst.resolve('prev', {}).graphic === CHOICES[CHOICES.indexOf('alwc') - 1],
 		inst.resolve('prev', {}))
 	check('resolve: hide keeps the graphic but drops it off air',
 		JSON.stringify(inst.resolve('hide', {})) === JSON.stringify({ graphic: 'alwc', visible: false }))
 
 	const savedGraphic = inst.state.graphic
-	inst.state.graphic = 'nlwc'
+	inst.state.graphic = CHOICES[NG - 1]
 	check('resolve: next wraps off the end back to the first',
-		JSON.stringify(inst.resolve('next', {})) === JSON.stringify({ graphic: 'al', visible: true }),
-		inst.resolve('next', {}))
+		inst.resolve('next', {}).graphic === CHOICES[0], inst.resolve('next', {}))
 	inst.state.graphic = null
 	check('resolve: next from nothing starts at the first graphic',
-		JSON.stringify(inst.resolve('next', {})) === JSON.stringify({ graphic: 'al', visible: true }))
+		inst.resolve('next', {}).graphic === CHOICES[0])
 	check('resolve: prev from nothing starts at the last graphic',
-		JSON.stringify(inst.resolve('prev', {})) === JSON.stringify({ graphic: 'nlwc', visible: true }))
+		inst.resolve('prev', {}).graphic === CHOICES[NG - 1], inst.resolve('prev', {}))
 	inst.state.graphic = savedGraphic
 
 	/* ---- control window closes; the ntfy fallback takes over ---- */

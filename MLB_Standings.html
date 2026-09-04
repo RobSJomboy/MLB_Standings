@@ -232,6 +232,115 @@
     text-shadow: 0 1px 3px rgba(0,0,0,0.8);
   }
 
+  /* ── PLAYOFF PICTURE ──
+     Denser than the standings panels because it carries four sections, so the
+     type steps down a notch and the seed number does the work a division label
+     does elsewhere. */
+  #content.layout-po { justify-content: space-between; }
+
+  .po-section { padding: 0 15px; display: flex; flex-direction: column; }
+
+  .po-label {
+    font-family: 'Rift', sans-serif;
+    font-weight: 700;
+    font-size: 31px;
+    color: #c8a84b;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    line-height: 1.0;
+    padding-bottom: 3px;
+    margin-bottom: 3px;
+    border-bottom: 2px solid rgba(255,255,255,0.15);
+    text-shadow: 0 1px 3px rgba(0,0,0,0.9);
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  /* The format explained in passing, rather than assumed knowledge. */
+  .po-hint {
+    font-size: 17px;
+    letter-spacing: 0.5px;
+    color: rgba(255,255,255,0.5);
+    text-transform: uppercase;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  /* seed | logo | name | W-L | note */
+  .team-row.po-row {
+    grid-template-columns: 32px 40px 1fr 78px 132px;
+    gap: 4px;
+  }
+  .po-row .team-logo { width: 40px; height: 40px; }
+  .po-row .team-name { font-size: 34px; padding-left: 2px; padding-right: 6px; }
+  .po-row .team-wl   { font-size: 30px; }
+
+  .po-seed {
+    font-family: 'Rift', sans-serif;
+    font-weight: 700;
+    font-size: 28px;
+    color: #c8a84b;
+    text-align: center;
+    text-shadow: 0 1px 3px rgba(0,0,0,0.9);
+  }
+
+  .po-note {
+    font-family: 'Rift', sans-serif;
+    font-weight: 700;
+    font-size: 20px;
+    color: #8fa3b3;
+    /* .po-note.key below lifts the ones that answer "who would they play" */
+    text-align: right;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    white-space: nowrap;
+    text-shadow: 0 1px 3px rgba(0,0,0,0.9);
+  }
+
+  /* The bracket that makes a matchup read as a matchup. */
+  .po-pair {
+    border-left: 3px solid rgba(200,168,75,0.6);
+    padding-left: 7px;
+    margin: 4px 0 4px 2px;
+  }
+  /* Two matchups, not four rows — the gap is what separates 3v6 from 4v5. */
+  .po-pair + .po-pair { margin-top: 15px; }
+
+  .po-note.key { color: #c8a84b; font-size: 21px; }
+
+  .po-tie {
+    color: #c8a84b;
+    font-size: 17px;
+    vertical-align: super;
+    padding-left: 2px;
+  }
+  .po-caveat {
+    font-family: 'Rift', sans-serif;
+    font-weight: 700;
+    font-size: 17px;
+    color: #8fa3b3;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    padding-top: 3px;
+    text-shadow: 0 1px 3px rgba(0,0,0,0.9);
+  }
+
+  .po-clinch { color: #c8a84b; font-size: 24px; padding-left: 7px; }
+
+  .po-foot {
+    font-family: 'Rift', sans-serif;
+    font-weight: 700;
+    font-size: 25px;
+    color: #fff;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    padding-top: 4px;
+    border-top: 2px solid rgba(200,168,75,0.4);
+    text-shadow: 0 1px 3px rgba(0,0,0,0.9);
+  }
+  .po-foot b { color: #c8a84b; }
+
   /* Wild card spot separator — the cut line for the 3 playoff spots */
   .wc-spot-separator {
     border-top: 2px dashed rgba(200,168,75,0.5);
@@ -589,7 +698,7 @@
           <button class="btn wide" id="btn-hide">Clear off screen</button>
         </div>
         <div class="note">
-          Keys: <code>1</code>–<code>4</code> take a graphic &middot; <code>0</code> or <code>Esc</code> clears
+          Keys: <code>1</code>–<code>6</code> take a graphic &middot; <code>0</code> or <code>Esc</code> clears
           &middot; <code>[</code> toggles &middot; <code>&larr;</code> <code>&rarr;</code> step through.
         </div>
       </div>
@@ -691,8 +800,10 @@ const GRAPHICS = {
   nl:   { label: 'NL Standings',  league: 104, kind: 'div', logo: NL_LOGO, title: ['NL Standings'] },
   alwc: { label: 'AL Wild Card',  league: 103, kind: 'wc',  logo: AL_LOGO, title: ['AL Wild Card'] },
   nlwc: { label: 'NL Wild Card',  league: 104, kind: 'wc',  logo: NL_LOGO, title: ['NL Wild Card'] },
+  alpo: { label: 'AL Playoffs',   league: 103, kind: 'po',  logo: AL_LOGO, title: ['AL Playoff Picture'] },
+  nlpo: { label: 'NL Playoffs',   league: 104, kind: 'po',  logo: NL_LOGO, title: ['NL Playoff Picture'] },
 };
-const ORDER = ['al', 'nl', 'alwc', 'nlwc'];
+const ORDER = ['al', 'nl', 'alwc', 'nlwc', 'alpo', 'nlpo'];
 
 const DIVISIONS = {
   103: [{ id: 201, name: 'East' }, { id: 202, name: 'Central' }, { id: 200, name: 'West' }],
@@ -721,6 +832,11 @@ const DARK_CAPS = new Set([
 
 const logoURL = (id) => `${DARK_CAPS.has(id) ? LOGO_WHITE : LOGO_COLOUR}/${id}.svg`;
 const WC_SPOTS  = 3;          // teams above the dashed cut line
+const GAMES_IN_SEASON = 162;
+/* How far back still counts as "in it" for the just-out list and for deciding
+   which remaining games matter. Six games with three weeks left is roughly the
+   edge of live; beyond that a team is a footnote, not a scenario. */
+const IN_IT_GB = 6.0;
 const REFRESH_MS = 30 * 60 * 1000;
 
 const params   = new URLSearchParams(location.search);
@@ -740,7 +856,7 @@ let rendered = null;                             // whose markup is in #content
 let pending = null;                              // graphic waiting on data
 let outPending = false;                          // a slide-out is in flight
 
-const data = { div: null, wc: null, updated: null, error: null };
+const data = { div: null, wc: null, sched: null, updated: null, error: null };
 
 /* ════════════════════════════════════════════════════════════════════════
    DATA — MLB StatsAPI
@@ -759,13 +875,36 @@ async function fetchAll() {
   const wcURL  = `https://statsapi.mlb.com/api/v1/standings?leagueId=103,104&season=${season}` +
                  `&standingsTypes=wildCard&hydrate=team,division,wildCard`;
 
-  const [divRes, wcRes] = await Promise.allSettled([getJSON(divURL), getJSON(wcURL)]);
+  /* Every unplayed regular-season game left in the year. gameType=R keeps the
+     postseason out, so a generous end date is safe and saves asking the API when
+     the season actually ends. `fields` trims the payload to the two team ids per
+     game, which is all the head-to-head count needs. */
+  const today = new Date().toISOString().slice(0, 10);
+  const schedURL = `https://statsapi.mlb.com/api/v1/schedule?sportId=1&gameType=R` +
+                   `&startDate=${today}&endDate=${season}-12-31` +
+                   `&fields=dates,games,teams,away,home,team,id,status,abstractGameState`;
+
+  const [divRes, wcRes, schedRes] =
+    await Promise.allSettled([getJSON(divURL), getJSON(wcURL), getJSON(schedURL)]);
 
   if (divRes.status === 'fulfilled' && (divRes.value.records || []).length) {
     data.div = divRes.value.records;
   }
   if (wcRes.status === 'fulfilled' && (wcRes.value.records || []).length) {
     data.wc = wcRes.value.records;
+  }
+  if (schedRes.status === 'fulfilled') {
+    const games = [];
+    (schedRes.value.dates || []).forEach((day) => {
+      (day.games || []).forEach((g) => {
+        // Only games not yet played can still swing anything.
+        const st = (g.status || {}).abstractGameState;
+        if (st === 'Final') return;
+        const a = ((g.teams || {}).away || {}).team, h = ((g.teams || {}).home || {}).team;
+        if (a && h) games.push([a.id, h.id]);
+      });
+    });
+    data.sched = games;
   }
 
   data.error = (!data.div && !data.wc) ? 'Could not reach statsapi.mlb.com' : null;
@@ -907,6 +1046,201 @@ function wildCardTeams(leagueId) {
   });
 }
 
+/* ════════════════════════════════════════════════════════════════════════
+   PLAYOFF PICTURE
+
+   The format, which is what the graphic is really explaining:
+   six clubs per league — three division winners, three wild cards. Seeds 1
+   and 2 are the two best division winners and skip the first round entirely.
+   Seed 3 is the remaining division winner; 4, 5, 6 are the wild cards, best
+   record first. The wild card round is 3 v 6 and 4 v 5, best of three, with
+   the higher seed hosting every game. Then 1 plays the 4/5 winner and 2 plays
+   the 3/6 winner in the Division Series.
+
+   Note what this deliberately does NOT do: resolve ties. MLB breaks a tie for
+   a seed on head-to-head record and then intra-division record, which the
+   standings feed does not carry. Teams level on points are ordered here by
+   record, then wins, then run differential — stable and sensible, but if two
+   clubs are dead level the seed line between them is this tool's guess, not
+   MLB's ruling.
+   ════════════════════════════════════════════════════════════════════════ */
+
+function pctOf(t) {
+  const w = wins(t), l = losses(t);
+  return w / Math.max(1, w + l);
+}
+
+/* Best record first. Wins then run differential only ever break a visual tie. */
+function byRecord(a, b) {
+  const d = pctOf(b) - pctOf(a);
+  if (d) return d;
+  if (wins(b) !== wins(a)) return wins(b) - wins(a);
+  return (b.runDifferential || 0) - (a.runDifferential || 0);
+}
+
+const gamesLeft = (t) =>
+  Math.max(0, GAMES_IN_SEASON - (t.gamesPlayed || 0));
+
+/* Games behind a reference club, the standard (wins + losses) / 2. */
+const gamesBehind = (t, ref) =>
+  ((wins(ref) - wins(t)) + (losses(t) - losses(ref))) / 2;
+
+/* Take the top club in each division as its winner rather than trusting the
+   divisionLeader flag, which the feed sets on BOTH clubs when they are tied and
+   would then hand us four "winners" and a broken bracket. */
+function seedsFor(leagueId) {
+  if (!data.div) return null;
+
+  const all = [], leaders = [];
+  DIVISIONS[leagueId].forEach((div) => {
+    const rec = data.div.find((r) => r.division && r.division.id === div.id);
+    if (!rec || !rec.teamRecords.length) return;
+    const sorted = rec.teamRecords.slice().sort(byRecord);
+    leaders.push(sorted[0]);
+    sorted.forEach((t) => all.push(t));
+  });
+  if (leaders.length < 3 || all.length < 6) return null;
+
+  const leaderIds = new Set(leaders.map((t) => t.team.id));
+  const rest = all.filter((t) => !leaderIds.has(t.team.id)).sort(byRecord);
+  leaders.sort(byRecord);
+
+  return { seeds: leaders.concat(rest.slice(0, WC_SPOTS)), rest, cut: rest[WC_SPOTS - 1] };
+}
+
+const eliminated = (t) =>
+  String(t.wildCardEliminationNumber || '').toUpperCase() === 'E';
+
+const sameRecord = (a, b) => a && b && wins(a) === wins(b) && losses(a) === losses(b);
+
+/* Ties matter here in a way they don't in a standings list. Level on record,
+   MLB separates clubs on head-to-head and then intraleague record — neither of
+   which is in this feed — so our order is a sensible guess, not the ruling. Two
+   boundaries change what the graphic actually asserts:
+
+     seeds 2 / 3  — who skips the wild card round entirely
+     seed 6 / 7   — who is in at all
+
+   Where either is level, say so on the graphic rather than quietly picking. */
+function bracketTies(pic) {
+  const s = pic.seeds;
+  const first_out = pic.rest[WC_SPOTS];
+  const flags = new Map();
+  const notes = [];
+
+  if (sameRecord(s[1], s[2])) {
+    flags.set(s[1].team.id, true);
+    flags.set(s[2].team.id, true);
+    notes.push('the bye');
+  }
+  if (sameRecord(s[5], first_out)) {
+    flags.set(s[5].team.id, true);
+    flags.set(first_out.team.id, true);
+    notes.push('the last spot');
+  }
+  return { flags, notes };
+}
+
+/* Clubs still close enough to matter: the six in, plus anyone within IN_IT_GB
+   of the last wild card who has not been eliminated. */
+function inItSet(pic) {
+  const ids = new Set(pic.seeds.map((t) => t.team.id));
+  pic.rest.slice(WC_SPOTS).forEach((t) => {
+    if (gamesBehind(t, pic.cut) <= IN_IT_GB && !eliminated(t)) ids.add(t.team.id);
+  });
+  return ids;
+}
+
+/* Remaining games between two clubs that are both still in it — the ones that
+   actually move the wild card or a division, as opposed to games against clubs
+   playing out the year. */
+function swingGames(pic) {
+  if (!data.sched) return null;
+  const ids = inItSet(pic);
+  let n = 0;
+  data.sched.forEach((g) => { if (ids.has(g[0]) && ids.has(g[1])) n++; });
+  return { games: n, teams: ids.size };
+}
+
+function poTeamRow(t, seed, note, delay, noteClass, tied) {
+  const id = t.team.id;
+  const name = (t.team.teamName || t.team.name || '').toUpperCase();
+  return `<div class="team-row po-row" style="animation-delay:${delay}ms">
+    <span class="po-seed">${seed || ''}</span>
+    <img class="team-logo" src="${logoURL(id)}" alt="${name}"
+         onerror="if(this.dataset.fb){this.style.visibility='hidden'}else{this.dataset.fb=1;this.src='${LOGO_WHITE}/${id}.svg'}">
+    <span class="team-name">${name}${t.clinched ? '<span class="po-clinch">&#10003;</span>' : ''}</span>
+    <span class="team-wl">${wins(t)}-${losses(t)}${tied ? '<span class="po-tie">T</span>' : ''}</span>
+    <span class="po-note${noteClass ? ' ' + noteClass : ''}">${note || ''}</span>
+  </div>`;
+}
+
+function buildPlayoffs(leagueId) {
+  const pic = seedsFor(leagueId);
+  if (!pic) return null;
+
+  const s = pic.seeds;
+  const abbr = (t) => (t.team.teamName || '').toUpperCase();
+  const { flags: tied, notes: tieNotes } = bracketTies(pic);
+  const isTied = (t) => tied.has(t.team.id);
+  rowCount = 0;
+
+  let html = '';
+
+  /* ── the two byes, and who each one is waiting on ── */
+  html += '<div class="po-section">';
+  html += `<div class="po-label">Bye to the Division Series
+             <span class="po-hint">first round off</span></div>`;
+  html += poTeamRow(s[0], 1, 'AWAITS 4/5 WINNER', rowDelay(), 'key', isTied(s[0]));
+  html += poTeamRow(s[1], 2, 'AWAITS 3/6 WINNER', rowDelay(), 'key', isTied(s[1]));
+  html += '</div>';
+
+  /* ── the wild card round, paired so the matchups read at a glance ── */
+  html += '<div class="po-section">';
+  html += `<div class="po-label">Wild Card Series
+             <span class="po-hint">best of 3 &middot; higher seed hosts</span></div>`;
+  [[2, 5], [3, 4]].forEach(([hi, lo]) => {
+    html += '<div class="po-pair">';
+    html += poTeamRow(s[hi], hi + 1, 'HOSTS', rowDelay(), 'key', isTied(s[hi]));
+    html += poTeamRow(s[lo], lo + 1, `AT ${abbr(s[hi]).slice(0, 9)}`, rowDelay(), '', isTied(s[lo]));
+    html += '</div>';
+  });
+  html += '</div>';
+
+  /* ── who is knocking, and how much time they have ── */
+  const chasing = pic.rest.slice(WC_SPOTS).filter((t) => !eliminated(t)).slice(0, 4);
+  html += '<div class="po-section">';
+  html += `<div class="po-label">Just out
+             <span class="po-hint">GB of the last spot &middot; games left</span></div>`;
+  if (!chasing.length) {
+    html += '<div class="po-foot">Field is set — nobody left within reach.</div>';
+  }
+  chasing.forEach((t) => {
+    const back = gamesBehind(t, pic.cut);
+    html += poTeamRow(t, '', `${back <= 0 ? '—' : back.toFixed(1)} GB &middot; ${gamesLeft(t)}`,
+                      rowDelay(), '', isTied(t));
+  });
+  html += '</div>';
+
+  /* ── the one number that says how live this all is ── */
+  /* Per-team games left is already on each just-out row, so the footer answers
+     the harder question: of everything unplayed, how much of it is between clubs
+     that can still move the wild card or a division. */
+  const swing = swingGames(pic);
+  html += '<div class="po-section"><div class="po-foot">';
+  html += swing
+    ? `<b>${swing.games}</b> games left between the ${swing.teams} clubs still in it`
+    : `${gamesLeft(s[0])} games left`;
+  html += '</div>';
+  if (tieNotes.length) {
+    html += `<div class="po-caveat"><span class="po-tie">T</span> tied on record —
+             ${tieNotes.join(' and ')} would go to MLB's tiebreaker</div>`;
+  }
+  html += '</div>';
+
+  return html;
+}
+
 function buildWildCard(leagueId) {
   const teams = wildCardTeams(leagueId);
   if (!teams) return null;
@@ -941,10 +1275,12 @@ function render(id, animate) {
   $('league-title').innerHTML = g.title.map((t) => `<span>${t}</span>`).join('');
 
   const content = $('content');
-  const layout = g.kind === 'wc' ? 'layout-wc' : 'layout-div';
+  const layout = g.kind === 'po' ? 'layout-po' : g.kind === 'wc' ? 'layout-wc' : 'layout-div';
   content.className = animate === false ? layout + ' no-anim' : layout;
 
-  const html = g.kind === 'wc' ? buildWildCard(g.league) : buildDivisions(g.league);
+  const html = g.kind === 'po' ? buildPlayoffs(g.league)
+             : g.kind === 'wc' ? buildWildCard(g.league)
+             : buildDivisions(g.league);
   if (!html) {
     content.innerHTML = `<div class="error-msg">${data.error || 'Loading…'}</div>`;
     rendered = null;

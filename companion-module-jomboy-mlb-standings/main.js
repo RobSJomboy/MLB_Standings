@@ -30,6 +30,8 @@ const GRAPHICS = [
 	{ id: 'nl', label: 'NL Standings' },
 	{ id: 'alwc', label: 'AL Wild Card' },
 	{ id: 'nlwc', label: 'NL Wild Card' },
+	{ id: 'alpo', label: 'AL Playoffs' },
+	{ id: 'nlpo', label: 'NL Playoffs' },
 ]
 const ORDER = GRAPHICS.map((g) => g.id)
 const labelFor = (id) => (GRAPHICS.find((g) => g.id === id) || {}).label || ''

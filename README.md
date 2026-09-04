@@ -1,18 +1,20 @@
 # MLB Standings
 
 On-air standings graphics for Jomboy Media shows. One HTML file gives you the
-operator window *and* the OBS overlay, with four graphics on it:
+operator window *and* the OBS overlay, with six graphics on it:
 
 - **AL Standings** — all three divisions, W-L / GB / L10
 - **NL Standings** — same
 - **AL Wild Card** — the wild card race with a dashed line under the three spots
 - **NL Wild Card** — same
+- **AL Playoff Picture** — the bracket as it stands: byes, matchups, who's just out
+- **NL Playoff Picture** — same
 
 The graphic is otherwise unchanged from the separate `AL_Standings` /
 `NL_Standings` / `*_WildCard_Standings` files it replaces: a 1920×1080
 transparent canvas with a 528×1004 panel pinned to the right, 38px down. Same
-Rift type, same gold `#c8a84b`, same slide-in and row build. Drop-in swap for
-the four Browser Sources you had before.
+Rift type, same gold `#c8a84b`, same slide-in and row build. The first four are a
+drop-in swap for the Browser Sources you had before.
 
 The one deliberate change: the header reads **AL Standings** / **NL Standings**
 rather than spelling out "American League Standings". Spelled out, it wrapped to
@@ -50,13 +52,13 @@ suits you; they are the same file.
 ### 1. Open the control window
 
 Open **<https://robsjomboy.github.io/MLB_Standings/>** (or double-click your local
-`MLB_Standings.html`). That is the operator window: four buttons, a live preview,
+`MLB_Standings.html`). That is the operator window: six buttons, a live preview,
 and the connection panels.
 
 The preview is not a mock-up — it is the same 1920×1080 markup the overlay uses,
 scaled down in place. What you see is what is going out.
 
-Keys: `1`–`4` take a graphic, `0` or `Esc` clears, `[` toggles, `←` `→` step
+Keys: `1`–`6` take a graphic, `0` or `Esc` clears, `[` toggles, `←` `→` step
 through. Clicking the graphic that is already up clears it.
 
 ### 2. Point OBS at the output
@@ -119,12 +121,46 @@ node relay/test-relay.js
 ```
 
 > Whichever remote route you use, the identifier is just a channel name and the
-> only thing crossing it is which of the four graphics is up. Nothing sensitive —
+> only thing crossing it is which graphic is up. Nothing sensitive —
 > though a relay on your own account isn't public the way an ntfy topic is.
 
 ### 3. Optional: Stream Deck
 
 See [the Companion module](companion-module-jomboy-mlb-standings/) below.
+
+---
+
+## The playoff picture panels
+
+Graphics 5 and 6 lay out the bracket as the standings currently have it.
+
+**The format they're showing.** Six clubs per league: three division winners and
+three wild cards. Seeds 1 and 2 are the two best division winners and skip the
+first round. Seed 3 is the remaining division winner; 4, 5 and 6 are the wild
+cards in record order. The Wild Card Series is 3 v 6 and 4 v 5, best of three,
+higher seed hosting every game. Then 1 plays the 4/5 winner and 2 plays the 3/6
+winner.
+
+So the panel answers, top to bottom: who has a bye and who they're waiting on,
+who is head to head and where those games are played, who is just out and by how
+much, and how many unplayed games are still between clubs that can move it.
+
+**Games left.** Each just-out row carries that club's own games remaining. The
+footer answers the harder question — of everything unplayed, how much is between
+clubs still in it. Games against a club playing out the year can't change a race;
+those are excluded. "Still in it" means the six in plus anyone within 6.0 of the
+last wild card who hasn't been eliminated, taken from the feed's own elimination
+number rather than guessed.
+
+**Ties are flagged, not guessed.** Level on record, MLB separates clubs on
+head-to-head and then intraleague record, and neither is in the standings feed.
+Where a tie falls on a line that changes what the graphic claims — the bye
+(seeds 2/3) or the last spot (6/7) — both clubs get a gold **T** by their record
+and a footnote says the tiebreaker decides it. Everywhere else, clubs level on
+record are ordered by run differential, which is a stable display choice and not
+an MLB rule.
+
+A club that has clinched gets a gold ✓ after its name.
 
 ---
 
