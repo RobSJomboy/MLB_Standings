@@ -152,13 +152,27 @@ those are excluded. "Still in it" means the six in plus anyone within 6.0 of the
 last wild card who hasn't been eliminated, taken from the feed's own elimination
 number rather than guessed.
 
-**Ties are flagged, not guessed.** Level on record, MLB separates clubs on
-head-to-head and then intraleague record, and neither is in the standings feed.
-Where a tie falls on a line that changes what the graphic claims — the bye
-(seeds 2/3) or the last spot (6/7) — both clubs get a gold **T** by their record
-and a footnote says the tiebreaker decides it. Everywhere else, clubs level on
-record are ordered by run differential, which is a stable display choice and not
-an MLB rule.
+**Ties use MLB's real criteria.** Since 2022 there is no game 163 — ties are
+settled on paper, in this order:
+
+1. head-to-head record between the clubs
+2. intradivision record — each club's record inside its own division, and this
+   applies **even when the two are not division rivals**
+3. interdivision record — record against the rest of its own league
+4. record over the last 81 intraleague games
+5. the last 82, then 83, and so on until it breaks
+
+None of that is in the standings feed, so the season's results are pulled from
+the schedule endpoint and the records computed. Three or more clubs level are
+separated first on each one's combined record against the others in the group,
+the way MLB does it — which also stops a pairwise sort going non-transitive on a
+rock-paper-scissors set of results.
+
+Where a tie falls on a line that changes what the graphic asserts — the bye
+(seeds 2/3) or the last spot (6/7) — both clubs get a gold **T** and the footnote
+names the winner and the criterion, e.g. *"Braves hold the bye on head-to-head
+5-1."* If the criteria genuinely cannot separate them, or the results are
+unavailable, it says that instead of picking.
 
 A club that has clinched gets a gold ✓ after its name.
 

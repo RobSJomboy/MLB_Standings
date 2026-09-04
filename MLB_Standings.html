@@ -856,7 +856,7 @@ let rendered = null;                             // whose markup is in #content
 let pending = null;                              // graphic waiting on data
 let outPending = false;                          // a slide-out is in flight
 
-const data = { div: null, wc: null, sched: null, updated: null, error: null };
+const data = { div: null, wc: null, sched: null, results: null, tb: null, updated: null, error: null };
 
 /* ════════════════════════════════════════════════════════════════════════
    DATA — MLB StatsAPI
@@ -875,14 +875,13 @@ async function fetchAll() {
   const wcURL  = `https://statsapi.mlb.com/api/v1/standings?leagueId=103,104&season=${season}` +
                  `&standingsTypes=wildCard&hydrate=team,division,wildCard`;
 
-  /* Every unplayed regular-season game left in the year. gameType=R keeps the
-     postseason out, so a generous end date is safe and saves asking the API when
-     the season actually ends. `fields` trims the payload to the two team ids per
-     game, which is all the head-to-head count needs. */
-  const today = new Date().toISOString().slice(0, 10);
+  /* The whole regular season in one call — unplayed games for the "how much
+     still matters" count, and finished ones with scores for the tiebreakers,
+     which cannot be answered from the standings feed at all. gameType=R keeps
+     the postseason out, and `fields` trims it to ids and scores: ~300KB. */
   const schedURL = `https://statsapi.mlb.com/api/v1/schedule?sportId=1&gameType=R` +
-                   `&startDate=${today}&endDate=${season}-12-31` +
-                   `&fields=dates,games,teams,away,home,team,id,status,abstractGameState`;
+                   `&startDate=${season}-01-01&endDate=${season}-12-31` +
+                   `&fields=dates,games,teams,away,home,team,id,score,status,abstractGameState`;
 
   const [divRes, wcRes, schedRes] =
     await Promise.allSettled([getJSON(divURL), getJSON(wcURL), getJSON(schedURL)]);
@@ -894,18 +893,25 @@ async function fetchAll() {
     data.wc = wcRes.value.records;
   }
   if (schedRes.status === 'fulfilled') {
-    const games = [];
+    const upcoming = [], results = [];
+    // dates come back in order, and the tiebreakers need chronology
     (schedRes.value.dates || []).forEach((day) => {
       (day.games || []).forEach((g) => {
-        // Only games not yet played can still swing anything.
-        const st = (g.status || {}).abstractGameState;
-        if (st === 'Final') return;
-        const a = ((g.teams || {}).away || {}).team, h = ((g.teams || {}).home || {}).team;
-        if (a && h) games.push([a.id, h.id]);
+        const a = ((g.teams || {}).away || {}), h = ((g.teams || {}).home || {});
+        if (!a.team || !h.team) return;
+        if ((g.status || {}).abstractGameState === 'Final') {
+          if (typeof a.score === 'number' && typeof h.score === 'number') {
+            results.push([a.team.id, h.team.id, a.score, h.score]);
+          }
+        } else {
+          upcoming.push([a.team.id, h.team.id]);
+        }
       });
     });
-    data.sched = games;
+    data.sched = upcoming;
+    data.results = results;
   }
+  buildTiebreakIndex();
 
   data.error = (!data.div && !data.wc) ? 'Could not reach statsapi.mlb.com' : null;
   data.updated = data.error ? data.updated : new Date();
@@ -1070,13 +1076,153 @@ function pctOf(t) {
   return w / Math.max(1, w + l);
 }
 
-/* Best record first. Wins then run differential only ever break a visual tie. */
-function byRecord(a, b) {
-  const d = pctOf(b) - pctOf(a);
-  if (d) return d;
-  if (wins(b) !== wins(a)) return wins(b) - wins(a);
-  return (b.runDifferential || 0) - (a.runDifferential || 0);
+/* ── MLB's actual tiebreakers ────────────────────────────────────────────
+   Since 2022 there is no game 163; ties are settled on paper, in this order:
+
+     1. head-to-head record between the clubs
+     2. intradivision record — each club's record inside its own division,
+        and this applies even when the two are NOT division rivals
+     3. interdivision record — record against the rest of its own league
+     4. record over the last 81 intraleague games
+     5. the last 82, then 83, and so on until it breaks
+
+   None of that is in the standings feed, which is why the first version fell
+   back to run differential — not an MLB criterion, and it got the current
+   Braves/Dodgers bye backwards. So we compute it from the season's results.
+
+   For three or more clubs level, MLB looks at each one's combined record
+   against the others in the group first, then pairs off. Doing it that way
+   also avoids a pairwise sort going non-transitive on a rock-paper-scissors
+   set of results.
+   ──────────────────────────────────────────────────────────────────────── */
+
+const TB_HALF = 81;   // "last half of intraleague games"
+
+function buildTiebreakIndex() {
+  data.tb = null;
+  if (!data.results || !data.results.length || !data.div) return;
+
+  const divOf = new Map(), lgOf = new Map();
+  data.div.forEach((rec) => {
+    const d = rec.division && rec.division.id;
+    const l = rec.league && rec.league.id;
+    rec.teamRecords.forEach((t) => { divOf.set(t.team.id, d); lgOf.set(t.team.id, l); });
+  });
+
+  const h2h = new Map(), div = new Map(), inter = new Map(), intra = new Map();
+  const bump = (m, k, won) => {
+    const r = m.get(k) || { w: 0, l: 0 };
+    won ? r.w++ : r.l++;
+    m.set(k, r);
+  };
+  const push = (id, won) => {
+    const a = intra.get(id) || [];
+    a.push(won);
+    intra.set(id, a);
+  };
+
+  data.results.forEach(([a, h, as, hs]) => {
+    if (as === hs) return;                       // no ties in baseball, but be safe
+    const aWon = as > hs;
+    bump(h2h, a + ':' + h, aWon);
+    bump(h2h, h + ':' + a, !aWon);
+
+    if (lgOf.get(a) && lgOf.get(a) === lgOf.get(h)) {
+      const sameDiv = divOf.get(a) === divOf.get(h);
+      bump(sameDiv ? div : inter, a, aWon);
+      bump(sameDiv ? div : inter, h, !aWon);
+      push(a, aWon);                             // chronological, for criteria 4-5
+      push(h, !aWon);
+    }
+  });
+
+  data.tb = { h2h, div, inter, intra };
 }
+
+const recPct = (r) => (r && (r.w + r.l) ? r.w / (r.w + r.l) : null);
+const recStr = (r) => (r ? `${r.w}-${r.l}` : '—');
+const lastN = (arr, n) => {
+  const s = (arr || []).slice(-n);
+  return { w: s.filter(Boolean).length, l: s.filter((x) => !x).length };
+};
+
+/* Compare two clubs level on record. cmp < 0 puts `a` ahead. `why` names the
+   criterion that decided it, for the graphic to state rather than imply. */
+function tiebreak(a, b) {
+  const none = { cmp: 0, why: null, unresolved: true };
+  const tb = data.tb;
+  if (!tb) return { cmp: 0, why: null, noData: true, unresolved: true };
+
+  const A = a.team.id, B = b.team.id;
+
+  const hh = tb.h2h.get(A + ':' + B);
+  if (hh && hh.w !== hh.l) {
+    return { cmp: hh.l - hh.w, why: `head-to-head ${Math.max(hh.w, hh.l)}-${Math.min(hh.w, hh.l)}` };
+  }
+
+  for (const [map, label] of [[tb.div, 'division record'], [tb.inter, 'record outside the division']]) {
+    const pa = recPct(map.get(A)), pb = recPct(map.get(B));
+    if (pa !== null && pb !== null && pa !== pb) {
+      return { cmp: pb - pa, why: `${label} ${recStr(map.get(pa > pb ? A : B))}` };
+    }
+  }
+
+  const ia = tb.intra.get(A) || [], ib = tb.intra.get(B) || [];
+  const deepest = Math.max(ia.length, ib.length);
+  for (let n = TB_HALF; n <= deepest; n++) {
+    const ra = lastN(ia, n), rb = lastN(ib, n);
+    const pa = recPct(ra), pb = recPct(rb);
+    if (pa !== null && pb !== null && pa !== pb) {
+      return { cmp: pb - pa, why: `last ${n} league games ${recStr(pa > pb ? ra : rb)}` };
+    }
+  }
+
+  return none;
+}
+
+/* Sort into seed order: record first, then the real tiebreakers. Clubs level on
+   record are handled as a group so a three-way tie uses each club's combined
+   record against the others, the way MLB does it. */
+function sortSeeded(teams) {
+  const groups = [];
+  teams.slice()
+    .sort((a, b) => pctOf(b) - pctOf(a))
+    .forEach((t) => {
+      const g = groups[groups.length - 1];
+      if (g && Math.abs(pctOf(g[0]) - pctOf(t)) < 1e-9) g.push(t);
+      else groups.push([t]);
+    });
+
+  const out = [];
+  groups.forEach((g) => {
+    if (g.length === 1) { out.push(g[0]); return; }
+
+    if (g.length > 2 && data.tb) {
+      // combined record against the rest of the tied group
+      const score = new Map();
+      g.forEach((t) => {
+        let w = 0, l = 0;
+        g.forEach((o) => {
+          if (o === t) return;
+          const r = data.tb.h2h.get(t.team.id + ':' + o.team.id);
+          if (r) { w += r.w; l += r.l; }
+        });
+        score.set(t.team.id, recPct({ w, l }));
+      });
+      g.sort((a, b) => {
+        const pa = score.get(a.team.id), pb = score.get(b.team.id);
+        if (pa !== null && pb !== null && pa !== pb) return pb - pa;
+        return tiebreak(a, b).cmp || (b.runDifferential || 0) - (a.runDifferential || 0);
+      });
+    } else {
+      g.sort((a, b) => tiebreak(a, b).cmp || (b.runDifferential || 0) - (a.runDifferential || 0));
+    }
+    g.forEach((t) => out.push(t));
+  });
+  return out;
+}
+
+
 
 const gamesLeft = (t) =>
   Math.max(0, GAMES_IN_SEASON - (t.gamesPlayed || 0));
@@ -1091,19 +1237,20 @@ const gamesBehind = (t, ref) =>
 function seedsFor(leagueId) {
   if (!data.div) return null;
 
-  const all = [], leaders = [];
+  const all = [];
+  let leaders = [];
   DIVISIONS[leagueId].forEach((div) => {
     const rec = data.div.find((r) => r.division && r.division.id === div.id);
     if (!rec || !rec.teamRecords.length) return;
-    const sorted = rec.teamRecords.slice().sort(byRecord);
+    const sorted = sortSeeded(rec.teamRecords);
     leaders.push(sorted[0]);
     sorted.forEach((t) => all.push(t));
   });
   if (leaders.length < 3 || all.length < 6) return null;
 
   const leaderIds = new Set(leaders.map((t) => t.team.id));
-  const rest = all.filter((t) => !leaderIds.has(t.team.id)).sort(byRecord);
-  leaders.sort(byRecord);
+  const rest = sortSeeded(all.filter((t) => !leaderIds.has(t.team.id)));
+  leaders = sortSeeded(leaders);
 
   return { seeds: leaders.concat(rest.slice(0, WC_SPOTS)), rest, cut: rest[WC_SPOTS - 1] };
 }
@@ -1124,20 +1271,24 @@ const sameRecord = (a, b) => a && b && wins(a) === wins(b) && losses(a) === loss
    Where either is level, say so on the graphic rather than quietly picking. */
 function bracketTies(pic) {
   const s = pic.seeds;
-  const first_out = pic.rest[WC_SPOTS];
   const flags = new Map();
   const notes = [];
 
-  if (sameRecord(s[1], s[2])) {
-    flags.set(s[1].team.id, true);
-    flags.set(s[2].team.id, true);
-    notes.push('the bye');
-  }
-  if (sameRecord(s[5], first_out)) {
-    flags.set(s[5].team.id, true);
-    flags.set(first_out.team.id, true);
-    notes.push('the last spot');
-  }
+  /* `ahead` is already the higher seed — sortSeeded put it there using these
+     same criteria — so the note reports the decision rather than re-deciding. */
+  const check = (ahead, behind, what) => {
+    if (!ahead || !behind || !sameRecord(ahead, behind)) return;
+    flags.set(ahead.team.id, true);
+    flags.set(behind.team.id, true);
+    const t = tiebreak(ahead, behind);
+    const who = (ahead.team.teamName || '').toUpperCase();
+    if (t.noData) notes.push(`${what} is tied — tiebreaker data unavailable`);
+    else if (t.why) notes.push(`${who} hold ${what} on ${t.why}`);
+    else notes.push(`${what} is tied and MLB's criteria do not separate them`);
+  };
+
+  check(s[1], s[2], 'the bye');
+  check(s[5], pic.rest[WC_SPOTS], 'the last spot');
   return { flags, notes };
 }
 
@@ -1233,8 +1384,7 @@ function buildPlayoffs(leagueId) {
     : `${gamesLeft(s[0])} games left`;
   html += '</div>';
   if (tieNotes.length) {
-    html += `<div class="po-caveat"><span class="po-tie">T</span> tied on record —
-             ${tieNotes.join(' and ')} would go to MLB's tiebreaker</div>`;
+    html += `<div class="po-caveat"><span class="po-tie">T</span> ${tieNotes.join(' &middot; ')}</div>`;
   }
   html += '</div>';
 
