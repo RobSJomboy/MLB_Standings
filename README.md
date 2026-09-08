@@ -188,6 +188,28 @@ unavailable, it says that instead of picking.
 
 A club that has clinched gets a gold ✓ after its name.
 
+### Checking it against MLB
+
+Seeding is computed here rather than read from a feed, so the thing worth
+checking is whether that computation still agrees with what MLB publishes:
+
+```bash
+node verify-vs-mlb.js
+```
+
+It reads [MLB's playoff picture and bracket page](https://www.mlb.com/news/mlb-playoff-picture-and-bracket-2026),
+which states both the six seeds per league **and** who owns each head-to-head
+tiebreaker, and compares both against what this repo computes from the feed. It
+exits non-zero on any difference, so it works as a pre-show check or a cron job.
+
+It deliberately does not reimplement anything — it lifts the live functions out
+of `MLB_Standings.html` and runs those, so a pass says something about the code
+that actually goes to air. A copy agreeing with itself would prove nothing.
+
+Worth running before a show and any time the bracket looks surprising. If MLB
+changes that page's layout, the parser reports that it could not read it rather
+than silently passing.
+
 ---
 
 ## On a Windows PC

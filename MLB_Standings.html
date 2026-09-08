@@ -1063,12 +1063,9 @@ function wildCardTeams(leagueId) {
    the higher seed hosting every game. Then 1 plays the 4/5 winner and 2 plays
    the 3/6 winner in the Division Series.
 
-   Note what this deliberately does NOT do: resolve ties. MLB breaks a tie for
-   a seed on head-to-head record and then intra-division record, which the
-   standings feed does not carry. Teams level on points are ordered here by
-   record, then wins, then run differential — stable and sensible, but if two
-   clubs are dead level the seed line between them is this tool's guess, not
-   MLB's ruling.
+   Ties on record are resolved with MLB's real criteria, computed from the
+   season's results — see the block below. Cross-checked daily against MLB's own
+   published bracket by `verify-vs-mlb.js`.
    ════════════════════════════════════════════════════════════════════════ */
 
 function pctOf(t) {
